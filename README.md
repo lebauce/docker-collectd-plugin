@@ -12,7 +12,7 @@ This uses the new stats API (https://github.com/docker/docker/pull/9984) introdu
 
 Install
 -------
- 1. Place dockerplugin.py and dockerplugin.db in /usr/share/collectd (this is only an example).
+ 1. Place `dockerplugin.py` and `dockerplugin.db` in `/usr/share/collectd` (this is only an example).
  2. Configure the plugin (see below).
  3. Restart collectd.
 
@@ -22,11 +22,11 @@ Add the following to your collectd config:
 
     TypesDB "/usr/share/collectd/dockerplugin.db"
     LoadPlugin python
-    
+
     <Plugin python>
       ModulePath "/usr/share/collectd"
       Import "dockerplugin"
-    
+
       <Module dockerplugin>
         BaseURL "unix://var/run/docker.sock"
       </Module>
