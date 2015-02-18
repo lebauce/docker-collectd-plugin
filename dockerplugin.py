@@ -28,19 +28,29 @@ import dateutil.parser
 import json
 import time
 import sys
+import os
 
 PREFIX = "container-"
 
 if __name__ != "__main__":
     import collectd
 else:
-    class FakeCollectdValues:
+    class ExecCollectdValues:
         def dispatch(self):
-            print "Collectd value", self.__dict__
+            if not getattr(self, "host", ""):
+                self.host = os.environ.get("COLLECTD_HOSTNAME", "localhost")
+            identifier = "%s/%s" % (self.host, self.plugin)
+            if getattr(self, "plugin_instance", ""):
+                identifier += "-" + self.plugin_instance
+            identifier += "/" + self.type
+            if getattr(self, "type_instance", ""):
+                identifier += "-" + self.type_instance
+            print "PUTVAL", identifier, \
+                  ":".join(map(str, [int(self.time)] + self.values))
 
-    class FakeCollectd:
+    class ExecCollectd:
         def Values(self):
-            return FakeCollectdValues()
+            return ExecCollectdValues()
 
         def warning(self, msg):
             print "WARNING:", msg
@@ -48,7 +58,7 @@ else:
         def info(self, msg):
             print "INFO:", msg
 
-    collectd = FakeCollectd()
+    collectd = ExecCollectd()
 
 
 class DockerClient(docker.Client):
