@@ -29,6 +29,8 @@ import json
 import time
 import sys
 
+PREFIX = "container-"
+
 if __name__ != "__main__":
     import collectd
 else:
@@ -63,7 +65,7 @@ class Stats:
     def emit(cls, container, type, value, t="", type_instance=""):
         val = collectd.Values()
         val.plugin = "docker"
-        val.plugin_instance = "container-" + container
+        val.plugin_instance = PREFIX + container[:12]
         if type:
             val.type = type
         if type_instance:
