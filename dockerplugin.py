@@ -100,7 +100,7 @@ class BlkioStats(Stats):
             if len(values) == 5:
                 cls.emit(container["Id"], "blkio", values,
                          type_instance=key, t=t)
-            else:
+            elif values:
                 # For some reason, some fields contains only one value and the
                 # 'op' field is empty. Need to investigate this
                 cls.emit(container["Id"], "blkio.single", values,
