@@ -140,17 +140,21 @@ class DockerPlugin:
 
     def read_callback(self):
         for container in self.client.containers():
-            container = self.client.inspect_container(container)
-            collectd.debug('Reading stats from container {}{}'.format(
-                container['Id'][:7], container['Name']))
-            if not container['State']['Running']:
-                continue
-            stats = self.client.stats(container).next()
-            t = stats['read']
-            for key, value in stats.items():
-                klass = self.CLASSES.get(key)
-                if klass:
-                    klass.read(container, value, t)
+            try:
+                container = self.client.inspect_container(container)
+                collectd.debug('Reading stats from container {}{}'.format(
+                    container['Id'][:7], container['Name']))
+                if not container['State']['Running']:
+                    continue
+                stats = self.client.stats(container).next()
+                t = stats['read']
+                for key, value in stats.items():
+                    klass = self.CLASSES.get(key)
+                    if klass:
+                        klass.read(container, value, t)
+            except Exception, e:
+                collectd.warn('Error getting stats for container {}: {}'
+                              .format(container, e))
 
 
 # Command-line execution
