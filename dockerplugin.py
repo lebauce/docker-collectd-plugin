@@ -110,7 +110,7 @@ class NetworkStats(Stats):
 class MemoryStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
-        values = [stats['failcnt'], stats['max_usage'], stats['usage']]
+        values = [stats['limit'], stats['max_usage'], stats['usage']]
         cls.emit(container, 'memory.usage', values, t=t)
 
         for key, value in stats['stats'].items():
