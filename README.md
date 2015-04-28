@@ -39,6 +39,7 @@ LoadPlugin python
 
   <Module dockerplugin>
     BaseURL "unix://var/run/docker.sock"
+    Timeout 3
   </Module>
 </Plugin>
 ```
