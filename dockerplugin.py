@@ -26,17 +26,20 @@
 import docker
 import dateutil.parser
 import json
+import threading
 import time
 import sys
 import os
 
 
-class DockerClient(docker.Client):
-    """A wrapper around the regular Docker client that returns JSON from the
-    stats() method."""
-    def stats(self, container):
-        for stats in docker.Client.stats(self, container):
-            yield json.loads(stats)
+def _c(c):
+    """A helper method for representing a container in messages. If the given
+    argument is a string, it is assumed to be the container's ID and only the
+    first 7 digits will be returned. If it's a dictionary, the string returned
+    is <7-digit ID>/<name>."""
+    if type(c) == str or type(c) == unicode:
+        return c[:7]
+    return '{}/{}'.format(c['Id'][:7], c['Name'])
 
 
 class Stats:
@@ -45,11 +48,12 @@ class Stats:
         val = collectd.Values()
         val.plugin = 'docker'
         val.plugin_instance = container['Name']
+
         if type:
             val.type = type
         if type_instance:
             val.type_instance = type_instance
-        val.values = value
+
         if t:
             val.time = time.mktime(dateutil.parser.parse(t).timetuple())
         else:
@@ -61,6 +65,7 @@ class Stats:
         # https://github.com/collectd/collectd/issues/716
         val.meta = {'true': 'true'}
 
+        val.values = value
         val.dispatch()
 
     @classmethod
@@ -118,8 +123,74 @@ class MemoryStats(Stats):
                      type_instance=key, t=t)
 
 
+class ContainerStats(threading.Thread):
+    """
+    A thread that continuously consumes the stats stream from a container,
+    keeping the most recently read stats available for processing by CollectD.
+
+    Such a mechanism is required because the first read from Docker's stats API
+    endpoint can take up to one second. Hitting this endpoint for every
+    container running on the system would only be feasible if the number of
+    running containers was less than the polling interval of CollectD. Above
+    that, and the whole thing breaks down. It is thus required to maintain open
+    the stats stream and read from it, but because it is a continuous stream we
+    need to be continuously consuming from it to make sure that when CollectD
+    requests a plugin read, it gets the latest stats data from each container.
+
+    The role of this thread is to keep consuming from the stats endpoint (it's
+    a blocking stream read, getting stats data from the Docker daemon every
+    second), and make the most recently read data available in a variable.
+    """
+
+    def __init__(self, container, client):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.stop = False
+
+        self._container = container
+        self._client = client
+        self._feed = None
+        self._stats = None
+
+        # Automatically start stats reading thread
+        self.start()
+
+    def run(self):
+        collectd.info('Starting stats gathering for {}.'
+                      .format(_c(self._container)))
+
+        while not self.stop:
+            try:
+                if not self._feed:
+                    self._feed = self._client.stats(self._container)
+                self._stats = self._feed.next()
+            except Exception, e:
+                collectd.warning('Error reading stats from {}: {}'
+                                 .format(_c(self._container), e))
+                # Marking the feed as dead so we'll attempt to recreate it and
+                # survive transient Docker daemon errors/unavailabilities.
+                self._feed = None
+
+        collectd.info('Stopped stats gathering for {}.'
+                      .format(_c(self._container)))
+
+    @property
+    def stats(self):
+        """Wait, if needed, for stats to be available and return the most
+        recently read stats data, parsed as JSON, for the container."""
+        while not self._stats:
+            pass
+        return json.loads(self._stats)
+
+
 class DockerPlugin:
+    """
+    CollectD plugin for collecting statistics about running containers via
+    Docker's remote API /<container>/stats endpoint.
+    """
+
     DEFAULT_BASE_URL = 'unix://var/run/docker.sock'
+    DEFAULT_DOCKER_TIMEOUT = 5
     CLASSES = {'network': NetworkStats,
                'blkio_stats': BlkioStats,
                'cpu_stats': CpuStats,
@@ -127,34 +198,51 @@ class DockerPlugin:
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
+        self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
+        self.stats = {}
 
     def configure_callback(self, conf):
         for node in conf.children:
             if node.key == 'BaseURL':
                 self.docker_url = node.values[0]
+            elif node.key == 'Timeout':
+                self.timeout = int(node.values[0])
 
     def init_callback(self):
-        collectd.info('Collecting stats about Docker containers from {}.'
-                      .format(self.docker_url))
-        self.client = DockerClient(base_url=self.docker_url)
+        collectd.info(('Collecting stats about Docker containers from {} '
+                       '(timeout: {}s).')
+                      .format(self.docker_url, self.timeout))
+        self.client = docker.Client(base_url=self.docker_url)
+        self.client.timeout = self.timeout
 
     def read_callback(self):
-        for container in self.client.containers():
+        containers = [c for c in self.client.containers()
+                      if c['Status'].startswith('Up')]
+
+        # Terminate stats gathering threads for containers that are not running
+        # anymore.
+        for cid in set(self.stats) - set(map(lambda c: c['Id'], containers)):
+            self.stats[cid].stop = True
+            del self.stats[cid]
+
+        for container in containers:
             try:
                 container['Name'] = container['Names'][0][1:]
-                collectd.debug('Reading stats from container {}{}'.format(
-                    container['Id'][:7], container['Name']))
-                if not container['Status'].startswith('Up'):
-                    continue
-                stats = self.client.stats(container).next()
-                t = stats['read']
+
+                # Start a stats gathering thread if the container is new.
+                if container['Id'] not in self.stats:
+                    self.stats[container['Id']] = ContainerStats(container,
+                                                                 self.client)
+
+                # Get and process stats from the container.
+                stats = self.stats[container['Id']].stats
                 for key, value in stats.items():
                     klass = self.CLASSES.get(key)
                     if klass:
-                        klass.read(container, value, t)
+                        klass.read(container, value, stats['read'])
             except Exception, e:
-                collectd.warn('Error getting stats for container {}: {}'
-                              .format(container, e))
+                collectd.warning('Error getting stats for container {}: {}'
+                                 .format(_c(container), e))
 
 
 # Command-line execution
