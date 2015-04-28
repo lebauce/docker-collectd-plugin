@@ -23,13 +23,14 @@
 #
 # Requirements: docker-py
 
-import docker
 import dateutil.parser
+from distutils.version import StrictVersion
+import docker
 import json
+import os
 import threading
 import time
 import sys
-import os
 
 
 def _c(c):
@@ -191,6 +192,10 @@ class DockerPlugin:
 
     DEFAULT_BASE_URL = 'unix://var/run/docker.sock'
     DEFAULT_DOCKER_TIMEOUT = 5
+
+    # The stats endpoint is only supported by API >= 1.17
+    MIN_DOCKER_API_VERSION = '1.17'
+
     CLASSES = {'network': NetworkStats,
                'blkio_stats': BlkioStats,
                'cpu_stats': CpuStats,
@@ -199,6 +204,7 @@ class DockerPlugin:
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
+        self.capture = False
         self.stats = {}
 
     def configure_callback(self, conf):
@@ -209,13 +215,32 @@ class DockerPlugin:
                 self.timeout = int(node.values[0])
 
     def init_callback(self):
-        collectd.info(('Collecting stats about Docker containers from {} '
-                       '(timeout: {}s).')
-                      .format(self.docker_url, self.timeout))
         self.client = docker.Client(base_url=self.docker_url)
         self.client.timeout = self.timeout
 
+        # Check API version for stats endpoint support.
+        try:
+            version = self.client.version()['ApiVersion']
+            self.capture = StrictVersion(version) >= \
+                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION)
+        except:
+            pass
+
+        if self.capture:
+            collectd.info(('Collecting stats about Docker containers from {} '
+                           '(API version {}; timeout: {}s).')
+                          .format(self.docker_url, version, self.timeout))
+        else:
+            collectd.warning(('Docker daemon at {} (API version {}) does not '
+                              'support container statistics!')
+                             .format(self.docker_url, version))
+
     def read_callback(self):
+        if not self.capture:
+            # If not capturing stats, return immediately. This can happen if
+            # the target Docker daemon does not support the stats API.
+            return
+
         containers = [c for c in self.client.containers()
                       if c['Status'].startswith('Up')]
 
