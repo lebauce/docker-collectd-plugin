@@ -44,7 +44,7 @@ class Stats:
     def emit(cls, container, type, value, t=None, type_instance=None):
         val = collectd.Values()
         val.plugin = 'docker'
-        val.plugin_instance = container['Name'][1:]
+        val.plugin_instance = container['Name']
         if type:
             val.type = type
         if type_instance:
@@ -141,10 +141,10 @@ class DockerPlugin:
     def read_callback(self):
         for container in self.client.containers():
             try:
-                container = self.client.inspect_container(container)
+                container['Name'] = container['Names'][0][1:]
                 collectd.debug('Reading stats from container {}{}'.format(
                     container['Id'][:7], container['Name']))
-                if not container['State']['Running']:
+                if not container['Status'].startswith('Up'):
                     continue
                 stats = self.client.stats(container).next()
                 t = stats['read']
