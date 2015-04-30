@@ -215,32 +215,30 @@ class DockerPlugin:
                 self.timeout = int(node.values[0])
 
     def init_callback(self):
-        self.client = docker.Client(base_url=self.docker_url)
+        self.client = docker.Client(
+                base_url=self.docker_url,
+                version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
 
         # Check API version for stats endpoint support.
         try:
             version = self.client.version()['ApiVersion']
-            self.capture = StrictVersion(version) >= \
-                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION)
+            if StrictVersion(version) < \
+                    StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
+                raise Exception
         except:
-            pass
-
-        if self.capture:
-            collectd.info(('Collecting stats about Docker containers from {} '
-                           '(API version {}; timeout: {}s).')
-                          .format(self.docker_url, version, self.timeout))
-        else:
             collectd.warning(('Docker daemon at {} (API version {}) does not '
                               'support container statistics!')
                              .format(self.docker_url, version))
+            return False
+
+        collectd.register_read(self.read_callback)
+        collectd.info(('Collecting stats about Docker containers from {} '
+                       '(API version {}; timeout: {}s).')
+                      .format(self.docker_url, version, self.timeout))
+        return True
 
     def read_callback(self):
-        if not self.capture:
-            # If not capturing stats, return immediately. This can happen if
-            # the target Docker daemon does not support the stats API.
-            return
-
         containers = [c for c in self.client.containers()
                       if c['Status'].startswith('Up')]
 
@@ -300,8 +298,8 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         plugin.docker_url = sys.argv[1]
 
-    plugin.init_callback()
-    plugin.read_callback()
+    if plugin.init_callback():
+        plugin.read_callback()
 
 # Normal plugin execution via CollectD
 else:
@@ -309,4 +307,3 @@ else:
     plugin = DockerPlugin()
     collectd.register_config(plugin.configure_callback)
     collectd.register_init(plugin.init_callback)
-    collectd.register_read(plugin.read_callback)
