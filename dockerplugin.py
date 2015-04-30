@@ -227,9 +227,9 @@ class DockerPlugin:
                     StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
                 raise Exception
         except:
-            collectd.warning(('Docker daemon at {} (API version {}) does not '
+            collectd.warning(('Docker daemon at {} does not '
                               'support container statistics!')
-                             .format(self.docker_url, version))
+                             .format(self.docker_url))
             return False
 
         collectd.register_read(self.read_callback)
