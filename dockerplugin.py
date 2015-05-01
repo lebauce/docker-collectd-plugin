@@ -78,14 +78,28 @@ class BlkioStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
         for key, values in stats.items():
-            values = [int(x['value']) for x in values]
-            if len(values) == 5:
-                cls.emit(container, 'blkio', values, type_instance=key, t=t)
-            elif values:
-                # For some reason, some fields contains only one value and the
-                # 'op' field is empty. Need to investigate this
-                cls.emit(container, 'blkio.single', values,
-                         type_instance=key, t=t)
+            # Block IO stats are reported by block device (with major/minor
+            # numbers). We need to group and report the stats of each block
+            # device independently.
+            blkio_stats = {}
+            for value in values:
+                k = '{}-{}-{}'.format(key, value['major'], value['minor'])
+                if k not in blkio_stats:
+                    blkio_stats[k] = []
+                blkio_stats[k].append(value['value'])
+
+            for type_instance, values in blkio_stats.items():
+                if len(values) == 5:
+                    cls.emit(container, 'blkio', values,
+                             type_instance=type_instance, t=t)
+                elif len(values) == 1:
+                    # For some reason, some fields contains only one value and
+                    # the 'op' field is empty. Need to investigate this
+                    cls.emit(container, 'blkio.single', values,
+                             type_instance=key, t=t)
+                else:
+                    collectd.warn(('Unexpected number of blkio stats for '
+                                   'container {}!'.format(_c(container))))
 
 
 class CpuStats(Stats):
