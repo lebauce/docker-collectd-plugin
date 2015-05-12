@@ -78,14 +78,28 @@ class BlkioStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
         for key, values in stats.items():
-            values = [int(x['value']) for x in values]
-            if len(values) == 5:
-                cls.emit(container, 'blkio', values, type_instance=key, t=t)
-            elif values:
-                # For some reason, some fields contains only one value and the
-                # 'op' field is empty. Need to investigate this
-                cls.emit(container, 'blkio.single', values,
-                         type_instance=key, t=t)
+            # Block IO stats are reported by block device (with major/minor
+            # numbers). We need to group and report the stats of each block
+            # device independently.
+            blkio_stats = {}
+            for value in values:
+                k = '{}-{}-{}'.format(key, value['major'], value['minor'])
+                if k not in blkio_stats:
+                    blkio_stats[k] = []
+                blkio_stats[k].append(value['value'])
+
+            for type_instance, values in blkio_stats.items():
+                if len(values) == 5:
+                    cls.emit(container, 'blkio', values,
+                             type_instance=type_instance, t=t)
+                elif len(values) == 1:
+                    # For some reason, some fields contains only one value and
+                    # the 'op' field is empty. Need to investigate this
+                    cls.emit(container, 'blkio.single', values,
+                             type_instance=key, t=t)
+                else:
+                    collectd.warn(('Unexpected number of blkio stats for '
+                                   'container {}!'.format(_c(container))))
 
 
 class CpuStats(Stats):
@@ -215,32 +229,30 @@ class DockerPlugin:
                 self.timeout = int(node.values[0])
 
     def init_callback(self):
-        self.client = docker.Client(base_url=self.docker_url)
+        self.client = docker.Client(
+                base_url=self.docker_url,
+                version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
 
         # Check API version for stats endpoint support.
         try:
             version = self.client.version()['ApiVersion']
-            self.capture = StrictVersion(version) >= \
-                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION)
+            if StrictVersion(version) < \
+                    StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
+                raise Exception
         except:
-            pass
-
-        if self.capture:
-            collectd.info(('Collecting stats about Docker containers from {} '
-                           '(API version {}; timeout: {}s).')
-                          .format(self.docker_url, version, self.timeout))
-        else:
-            collectd.warning(('Docker daemon at {} (API version {}) does not '
+            collectd.warning(('Docker daemon at {} does not '
                               'support container statistics!')
-                             .format(self.docker_url, version))
+                             .format(self.docker_url))
+            return False
+
+        collectd.register_read(self.read_callback)
+        collectd.info(('Collecting stats about Docker containers from {} '
+                       '(API version {}; timeout: {}s).')
+                      .format(self.docker_url, version, self.timeout))
+        return True
 
     def read_callback(self):
-        if not self.capture:
-            # If not capturing stats, return immediately. This can happen if
-            # the target Docker daemon does not support the stats API.
-            return
-
         containers = [c for c in self.client.containers()
                       if c['Status'].startswith('Up')]
 
@@ -300,8 +312,8 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         plugin.docker_url = sys.argv[1]
 
-    plugin.init_callback()
-    plugin.read_callback()
+    if plugin.init_callback():
+        plugin.read_callback()
 
 # Normal plugin execution via CollectD
 else:
@@ -309,4 +321,3 @@ else:
     plugin = DockerPlugin()
     collectd.register_config(plugin.configure_callback)
     collectd.register_init(plugin.init_callback)
-    collectd.register_read(plugin.read_callback)

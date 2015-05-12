@@ -18,8 +18,9 @@ The name of the container is used for the `plugin_instance` dimension.
 
 ## Install
 
-1. Place `dockerplugin.py` and `dockerplugin.db` in a directory readable
-   by collectd; for example `/usr/share/collectd`.
+1. Checkout this repository somewhere on your system accessible by
+   collectd; for example as
+   `/usr/share/collectd/docker-collectd-plugin`.
 1. Install the Python requirements with `pip install -r
    requirements.txt`.
 1. Configure the plugin (see below).
@@ -30,11 +31,11 @@ The name of the container is used for the `plugin_instance` dimension.
 Add the following to your collectd config:
 
 ```
-TypesDB "/usr/share/collectd/dockerplugin.db"
+TypesDB "/usr/share/collectd/docker-collectd-plugin/dockerplugin.db"
 LoadPlugin python
 
 <Plugin python>
-  ModulePath "/usr/share/collectd"
+  ModulePath "/usr/share/collectd/docker-collectd-plugin"
   Import "dockerplugin"
 
   <Module dockerplugin>
