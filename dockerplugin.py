@@ -177,14 +177,29 @@ class ContainerStats(threading.Thread):
         collectd.info('Starting stats gathering for {container}.'
                       .format(container=_c(self._container)))
 
+        failures = 0
         while not self.stop:
             try:
                 if not self._feed:
                     self._feed = self._client.stats(self._container)
                 self._stats = self._feed.next()
+
+                # Reset failure count on successfull read from the stats API.
+                failures = 0
             except Exception, e:
                 collectd.warning('Error reading stats from {container}: {msg}'
                                  .format(container=_c(self._container), msg=e))
+
+                # If we encounter a failure, wait a second before retrying and
+                # mark the failures. After three consecutive failures, we'll
+                # stop the thread. If the container is still there, we'll spin
+                # up a new stats gathering thread the next time read_callback()
+                # gets called by CollectD.
+                time.sleep(1)
+                failures += 1
+                if failures > 3:
+                    self.stop = True
+
                 # Marking the feed as dead so we'll attempt to recreate it and
                 # survive transient Docker daemon errors/unavailabilities.
                 self._feed = None
