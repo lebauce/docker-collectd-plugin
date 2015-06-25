@@ -40,7 +40,7 @@ def _c(c):
     is <7-digit ID>/<name>."""
     if type(c) == str or type(c) == unicode:
         return c[:7]
-    return '{}/{}'.format(c['Id'][:7], c['Name'])
+    return '{id}/{name}'.format(id=c['Id'][:7], name=c['Name'])
 
 
 class Stats:
@@ -83,7 +83,9 @@ class BlkioStats(Stats):
             # device independently.
             blkio_stats = {}
             for value in values:
-                k = '{}-{}-{}'.format(key, value['major'], value['minor'])
+                k = '{key}-{major}-{minor}'.format(key=key,
+                                                   major=value['major'],
+                                                   minor=value['minor'])
                 if k not in blkio_stats:
                     blkio_stats[k] = []
                 blkio_stats[k].append(value['value'])
@@ -99,7 +101,8 @@ class BlkioStats(Stats):
                              type_instance=key, t=t)
                 else:
                     collectd.warn(('Unexpected number of blkio stats for '
-                                   'container {}!'.format(_c(container))))
+                                   'container {container}!')
+                                  .format(container=_c(container)))
 
 
 class CpuStats(Stats):
@@ -171,23 +174,38 @@ class ContainerStats(threading.Thread):
         self.start()
 
     def run(self):
-        collectd.info('Starting stats gathering for {}.'
-                      .format(_c(self._container)))
+        collectd.info('Starting stats gathering for {container}.'
+                      .format(container=_c(self._container)))
 
+        failures = 0
         while not self.stop:
             try:
                 if not self._feed:
                     self._feed = self._client.stats(self._container)
                 self._stats = self._feed.next()
+
+                # Reset failure count on successfull read from the stats API.
+                failures = 0
             except Exception, e:
-                collectd.warning('Error reading stats from {}: {}'
-                                 .format(_c(self._container), e))
+                collectd.warning('Error reading stats from {container}: {msg}'
+                                 .format(container=_c(self._container), msg=e))
+
+                # If we encounter a failure, wait a second before retrying and
+                # mark the failures. After three consecutive failures, we'll
+                # stop the thread. If the container is still there, we'll spin
+                # up a new stats gathering thread the next time read_callback()
+                # gets called by CollectD.
+                time.sleep(1)
+                failures += 1
+                if failures > 3:
+                    self.stop = True
+
                 # Marking the feed as dead so we'll attempt to recreate it and
                 # survive transient Docker daemon errors/unavailabilities.
                 self._feed = None
 
-        collectd.info('Stopped stats gathering for {}.'
-                      .format(_c(self._container)))
+        collectd.info('Stopped stats gathering for {container}.'
+                      .format(container=_c(self._container)))
 
     @property
     def stats(self):
@@ -241,15 +259,17 @@ class DockerPlugin:
                     StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
                 raise Exception
         except:
-            collectd.warning(('Docker daemon at {} does not '
+            collectd.warning(('Docker daemon at {url} does not '
                               'support container statistics!')
-                             .format(self.docker_url))
+                             .format(url=self.docker_url))
             return False
 
         collectd.register_read(self.read_callback)
-        collectd.info(('Collecting stats about Docker containers from {} '
-                       '(API version {}; timeout: {}s).')
-                      .format(self.docker_url, version, self.timeout))
+        collectd.info(('Collecting stats about Docker containers from {url} '
+                       '(API version {version}; timeout: {timeout}s).')
+                      .format(url=self.docker_url,
+                              version=version,
+                              timeout=self.timeout))
         return True
 
     def read_callback(self):
@@ -278,8 +298,9 @@ class DockerPlugin:
                     if klass:
                         klass.read(container, value, stats['read'])
             except Exception, e:
-                collectd.warning('Error getting stats for container {}: {}'
-                                 .format(_c(container), e))
+                collectd.warning(('Error getting stats for container '
+                                  '{container}: {msg}')
+                                 .format(container=_c(container), msg=e))
 
 
 # Command-line execution
