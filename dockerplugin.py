@@ -31,6 +31,7 @@ import os
 import threading
 import time
 import sys
+import re
 
 
 def _c(c):
@@ -76,7 +77,7 @@ class Stats:
 
 class BlkioStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, stats, extras, t):
         for key, values in stats.items():
             # Block IO stats are reported by block device (with major/minor
             # numbers). We need to group and report the stats of each block
@@ -107,9 +108,11 @@ class BlkioStats(Stats):
 
 class CpuStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, stats, extras, t):
         cpu_usage = stats['cpu_usage']
         percpu = cpu_usage['percpu_usage']
+        precpu = extras['precpu_stats']
+
         for cpu, value in enumerate(percpu):
             cls.emit(container, 'cpu.percpu.usage', [value],
                      type_instance='cpu%d' % (cpu,), t=t)
@@ -121,10 +124,19 @@ class CpuStats(Stats):
                   cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
         cls.emit(container, 'cpu.usage', values, t=t)
 
+        """ CPU Percentage based on calculateCPUPercent Docker method
+            https://github.com/docker/docker/blob/master/api/client/stats.go"""
+        cpuPercent = float(0.0)
+        cpuDelta = float(cpu_usage['total_usage']) - float(precpu['cpu_usage']['total_usage'])
+        systemDelta = float(stats['system_cpu_usage']) - float(precpu['system_cpu_usage'])
+        if (systemDelta > 0.0 and cpuDelta > 0.0):
+                cpuPercent = (cpuDelta / systemDelta) * len(percpu) * 100.0
+        cls.emit(container, "cpu.percent", ["%.2f" % (cpuPercent)], t=t)
+
 
 class NetworkStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, stats, extras, t):
         items = stats.items()
         items.sort()
         cls.emit(container, 'network.usage', [x[1] for x in items], t=t)
@@ -132,7 +144,7 @@ class NetworkStats(Stats):
 
 class MemoryStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, stats, extras, t):
         values = [stats['limit'], stats['max_usage'], stats['usage']]
         cls.emit(container, 'memory.usage', values, t=t)
 
@@ -182,8 +194,10 @@ class ContainerStats(threading.Thread):
             try:
                 if not self._feed:
                     self._feed = self._client.stats(self._container)
-                self._stats = self._feed.next()
-
+                ret = json.loads(self._feed.next())
+                # First call comes with empty precpustats we need it to be populated
+                if ret and ret['precpu_stats']['system_cpu_usage']:
+                    self._stats = ret
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
@@ -211,9 +225,10 @@ class ContainerStats(threading.Thread):
     def stats(self):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
+        """        while not self._stats or (self._stats and not self._stats['precpu_stats']['system_cpu_usage']):"""
         while not self._stats:
             pass
-        return json.loads(self._stats)
+        return self._stats
 
 
 class DockerPlugin:
@@ -233,6 +248,8 @@ class DockerPlugin:
                'cpu_stats': CpuStats,
                'memory_stats': MemoryStats}
 
+    EXTRA_STATS = {'cpu_stats': ['precpu_stats']}
+
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
@@ -248,8 +265,8 @@ class DockerPlugin:
 
     def init_callback(self):
         self.client = docker.Client(
-                base_url=self.docker_url,
-                version=DockerPlugin.MIN_DOCKER_API_VERSION)
+            base_url=self.docker_url,
+            version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
 
         # Check API version for stats endpoint support.
@@ -296,7 +313,14 @@ class DockerPlugin:
                 for key, value in stats.items():
                     klass = self.CLASSES.get(key)
                     if klass:
-                        klass.read(container, value, stats['read'])
+                        extra = self.EXTRA_STATS.get(key)
+                        if extra:
+                            extras = {}
+                            for k in extra:
+                                extras[k] = stats[k]
+                        else:
+                            extras = None
+                        klass.read(container, value, extras, stats['read'])
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
@@ -327,6 +351,9 @@ if __name__ == '__main__':
 
         def info(self, msg):
             print 'INFO:', msg
+
+        def register_read(self, docker_plugin):
+            pass
 
     collectd = ExecCollectd()
     plugin = DockerPlugin()
