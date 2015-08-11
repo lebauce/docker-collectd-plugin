@@ -301,7 +301,10 @@ class DockerPlugin:
 
         for container in containers:
             try:
-                container['Name'] = container['Names'][0][1:]
+                for name in container['Names']:
+                    # Containers can be linked and the container name is not necessarly the first entry of the list
+                    if not re.match("/.*/", name):
+                        container['Name'] = name[1:]
 
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
