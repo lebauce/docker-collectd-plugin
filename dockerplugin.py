@@ -71,27 +71,28 @@ class Stats:
         val.dispatch()
 
     @classmethod
-    def read(cls, container, stats):
+    def read(cls, container, stats, t):
         raise NotImplementedError
 
 
 class BlkioStats(Stats):
     @classmethod
-    def read(cls, container, stats, extras, t):
-        for key, values in stats.items():
+    def read(cls, container, stats, t):
+        blkio_stats = stats['blkio_stats']
+        for key, values in blkio_stats.items():
             # Block IO stats are reported by block device (with major/minor
             # numbers). We need to group and report the stats of each block
             # device independently.
-            blkio_stats = {}
+            device_stats = {}
             for value in values:
                 k = '{key}-{major}-{minor}'.format(key=key,
                                                    major=value['major'],
                                                    minor=value['minor'])
-                if k not in blkio_stats:
-                    blkio_stats[k] = []
-                blkio_stats[k].append(value['value'])
+                if k not in device_stats:
+                    device_stats[k] = []
+                device_stats[k].append(value['value'])
 
-            for type_instance, values in blkio_stats.items():
+            for type_instance, values in device_stats.items():
                 if len(values) == 5:
                     cls.emit(container, 'blkio', values,
                              type_instance=type_instance, t=t)
@@ -108,47 +109,52 @@ class BlkioStats(Stats):
 
 class CpuStats(Stats):
     @classmethod
-    def read(cls, container, stats, extras, t):
-        cpu_usage = stats['cpu_usage']
-        percpu = cpu_usage['percpu_usage']
-        precpu = extras['precpu_stats']
+    def read(cls, container, stats, t):
+        cpu_stats = stats['cpu_stats']
+        cpu_usage = cpu_stats['cpu_usage']
 
+        percpu = cpu_usage['percpu_usage']
         for cpu, value in enumerate(percpu):
             cls.emit(container, 'cpu.percpu.usage', [value],
                      type_instance='cpu%d' % (cpu,), t=t)
 
-        items = sorted(stats['throttling_data'].items())
+        items = sorted(cpu_stats['throttling_data'].items())
         cls.emit(container, 'cpu.throttling_data', [x[1] for x in items], t=t)
 
+        system_cpu_usage = cpu_stats['system_cpu_usage']
         values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
-                  cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
+                  cpu_usage['usage_in_usermode'], system_cpu_usage]
         cls.emit(container, 'cpu.usage', values, t=t)
 
         """ CPU Percentage based on calculateCPUPercent Docker method
             https://github.com/docker/docker/blob/master/api/client/stats.go"""
-        cpuPercent = float(0.0)
-        cpuDelta = float(cpu_usage['total_usage']) - float(precpu['cpu_usage']['total_usage'])
-        systemDelta = float(stats['system_cpu_usage']) - float(precpu['system_cpu_usage'])
-        if (systemDelta > 0.0 and cpuDelta > 0.0):
-                cpuPercent = (cpuDelta / systemDelta) * len(percpu) * 100.0
-        cls.emit(container, "cpu.percent", ["%.2f" % (cpuPercent)], t=t)
+        cpu_percent = 0.0
+        if 'precpu_stats' in stats:
+            precpu_stats = stats['precpu_stats']
+            precpu_usage = precpu_stats['cpu_usage']
+            cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
+            system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
+            if system_delta > 0 and cpu_delta > 0:
+                cpu_percent = 100 * cpu_delta / system_delta * len(percpu)
+        cls.emit(container, "cpu.percent", ["%.2f" % (cpu_percent)], t=t)
 
 
 class NetworkStats(Stats):
     @classmethod
-    def read(cls, container, stats, extras, t):
-        items = stats.items()
-        items.sort()
+    def read(cls, container, stats, t):
+        items = sorted(stats['network'].items())
         cls.emit(container, 'network.usage', [x[1] for x in items], t=t)
 
 
 class MemoryStats(Stats):
     @classmethod
-    def read(cls, container, stats, extras, t):
-        values = [stats['limit'], stats['max_usage'], stats['usage']]
+    def read(cls, container, stats, t):
+        mem_stats = stats['memory_stats']
+        values = [mem_stats['limit'], mem_stats['max_usage'],
+                  mem_stats['usage']]
         cls.emit(container, 'memory.usage', values, t=t)
 
-        for key, value in stats['stats'].items():
+        for key, value in mem_stats['stats'].items():
             cls.emit(container, 'memory.stats', [value],
                      type_instance=key, t=t)
 
@@ -243,12 +249,7 @@ class DockerPlugin:
     # The stats endpoint is only supported by API >= 1.17
     MIN_DOCKER_API_VERSION = '1.17'
 
-    CLASSES = {'network': NetworkStats,
-               'blkio_stats': BlkioStats,
-               'cpu_stats': CpuStats,
-               'memory_stats': MemoryStats}
-
-    EXTRA_STATS = {'cpu_stats': ['precpu_stats']}
+    CLASSES = [NetworkStats, BlkioStats, CpuStats, MemoryStats]
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
@@ -313,17 +314,9 @@ class DockerPlugin:
 
                 # Get and process stats from the container.
                 stats = self.stats[container['Id']].stats
-                for key, value in stats.items():
-                    klass = self.CLASSES.get(key)
-                    if klass:
-                        extra = self.EXTRA_STATS.get(key)
-                        if extra:
-                            extras = {}
-                            for k in extra:
-                                extras[k] = stats[k]
-                        else:
-                            extras = None
-                        klass.read(container, value, extras, stats['read'])
+                t = stats['read']
+                for klass in self.CLASSES:
+                    klass.read(container, stats, t)
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
