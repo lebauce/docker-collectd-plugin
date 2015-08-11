@@ -126,8 +126,8 @@ class CpuStats(Stats):
                   cpu_usage['usage_in_usermode'], system_cpu_usage]
         cls.emit(container, 'cpu.usage', values, t=t)
 
-        """ CPU Percentage based on calculateCPUPercent Docker method
-            https://github.com/docker/docker/blob/master/api/client/stats.go"""
+        # CPU Percentage based on calculateCPUPercent Docker method
+        # https://github.com/docker/docker/blob/master/api/client/stats.go
         cpu_percent = 0.0
         if 'precpu_stats' in stats:
             precpu_stats = stats['precpu_stats']
@@ -201,7 +201,8 @@ class ContainerStats(threading.Thread):
                 if not self._feed:
                     self._feed = self._client.stats(self._container)
                 ret = json.loads(self._feed.next())
-                # First call comes with empty precpustats we need it to be populated
+                # First call comes with empty precpustats we need it
+                # to be populated
                 if ret and ret['precpu_stats']['system_cpu_usage']:
                     self._stats = ret
                 # Reset failure count on successfull read from the stats API.
@@ -231,7 +232,6 @@ class ContainerStats(threading.Thread):
     def stats(self):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
-        """        while not self._stats or (self._stats and not self._stats['precpu_stats']['system_cpu_usage']):"""
         while not self._stats:
             pass
         return self._stats
@@ -303,7 +303,8 @@ class DockerPlugin:
         for container in containers:
             try:
                 for name in container['Names']:
-                    # Containers can be linked and the container name is not necessarly the first entry of the list
+                    # Containers can be linked and the container name is not
+                    # necessarly the first entry of the list
                     if not re.match("/.*/", name):
                         container['Name'] = name[1:]
 
