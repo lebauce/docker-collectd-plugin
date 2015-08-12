@@ -6,4 +6,5 @@ cpu.throttling_data     periods:COUNTER:0:U, throttled_periods:COUNTER:0:U, thro
 network.usage           rx_bytes:COUNTER:0:U, rx_dropped:COUNTER:0:U, rx_errors:COUNTER:0:U, rx_packets:COUNTER:0:U, tx_bytes:COUNTER:0:U, tx_dropped:COUNTER:0:U, tx_errors:COUNTER:0:U, tx_packets:COUNTER:0:U
 memory.usage            limit:GAUGE:0:U, max:GAUGE:0:U, total:GAUGE:0:U
 memory.stats            value:GAUGE:0:U
-cpu.percent             value:GAUGE:0:150 
+memory.percent          value:GAUGE:0:150
+cpu.percent             value:GAUGE:0:150

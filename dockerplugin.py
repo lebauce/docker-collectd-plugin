@@ -157,6 +157,9 @@ class MemoryStats(Stats):
             cls.emit(container, 'memory.stats', [value],
                      type_instance=key, t=t)
 
+        mem_percent = float(mem_stats['usage']) / float(mem_stats['limit']) * 100
+        cls.emit(container, 'memory.percent', ["%.2f" % (mem_percent)], t=t)
+
 
 class ContainerStats(threading.Thread):
     """
