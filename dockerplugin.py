@@ -199,12 +199,9 @@ class ContainerStats(threading.Thread):
         while not self.stop:
             try:
                 if not self._feed:
-                    self._feed = self._client.stats(self._container)
-                ret = json.loads(self._feed.next())
-                # First call comes with empty precpustats we need it
-                # to be populated
-                if ret and ret['precpu_stats']['system_cpu_usage']:
-                    self._stats = ret
+                    self._feed = self._client.stats(self._container,
+                                                    decode=True)
+                self._stats = self._feed.next()
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
