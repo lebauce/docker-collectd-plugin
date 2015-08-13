@@ -26,11 +26,11 @@
 import dateutil.parser
 from distutils.version import StrictVersion
 import docker
-import json
 import os
 import threading
 import time
 import sys
+import re
 
 
 def _c(c):
@@ -70,27 +70,28 @@ class Stats:
         val.dispatch()
 
     @classmethod
-    def read(cls, container, stats):
+    def read(cls, container, stats, t):
         raise NotImplementedError
 
 
 class BlkioStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
-        for key, values in stats.items():
+        blkio_stats = stats['blkio_stats']
+        for key, values in blkio_stats.items():
             # Block IO stats are reported by block device (with major/minor
             # numbers). We need to group and report the stats of each block
             # device independently.
-            blkio_stats = {}
+            device_stats = {}
             for value in values:
                 k = '{key}-{major}-{minor}'.format(key=key,
                                                    major=value['major'],
                                                    minor=value['minor'])
-                if k not in blkio_stats:
-                    blkio_stats[k] = []
-                blkio_stats[k].append(value['value'])
+                if k not in device_stats:
+                    device_stats[k] = []
+                device_stats[k].append(value['value'])
 
-            for type_instance, values in blkio_stats.items():
+            for type_instance, values in device_stats.items():
                 if len(values) == 5:
                     cls.emit(container, 'blkio', values,
                              type_instance=type_instance, t=t)
@@ -108,37 +109,56 @@ class BlkioStats(Stats):
 class CpuStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
-        cpu_usage = stats['cpu_usage']
+        cpu_stats = stats['cpu_stats']
+        cpu_usage = cpu_stats['cpu_usage']
+
         percpu = cpu_usage['percpu_usage']
         for cpu, value in enumerate(percpu):
             cls.emit(container, 'cpu.percpu.usage', [value],
                      type_instance='cpu%d' % (cpu,), t=t)
 
-        items = sorted(stats['throttling_data'].items())
+        items = sorted(cpu_stats['throttling_data'].items())
         cls.emit(container, 'cpu.throttling_data', [x[1] for x in items], t=t)
 
+        system_cpu_usage = cpu_stats['system_cpu_usage']
         values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
-                  cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
+                  cpu_usage['usage_in_usermode'], system_cpu_usage]
         cls.emit(container, 'cpu.usage', values, t=t)
+
+        # CPU Percentage based on calculateCPUPercent Docker method
+        # https://github.com/docker/docker/blob/master/api/client/stats.go
+        cpu_percent = 0.0
+        if 'precpu_stats' in stats:
+            precpu_stats = stats['precpu_stats']
+            precpu_usage = precpu_stats['cpu_usage']
+            cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
+            system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
+            if system_delta > 0 and cpu_delta > 0:
+                cpu_percent = 100.0 * cpu_delta / system_delta * len(percpu)
+        cls.emit(container, "cpu.percent", ["%.2f" % (cpu_percent)], t=t)
 
 
 class NetworkStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
-        items = stats.items()
-        items.sort()
+        items = sorted(stats['network'].items())
         cls.emit(container, 'network.usage', [x[1] for x in items], t=t)
 
 
 class MemoryStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
-        values = [stats['limit'], stats['max_usage'], stats['usage']]
+        mem_stats = stats['memory_stats']
+        values = [mem_stats['limit'], mem_stats['max_usage'],
+                  mem_stats['usage']]
         cls.emit(container, 'memory.usage', values, t=t)
 
-        for key, value in stats['stats'].items():
+        for key, value in mem_stats['stats'].items():
             cls.emit(container, 'memory.stats', [value],
                      type_instance=key, t=t)
+
+        mem_percent = 100.0 * mem_stats['usage'] / mem_stats['limit']
+        cls.emit(container, 'memory.percent', ["%.2f" % mem_percent], t=t)
 
 
 class ContainerStats(threading.Thread):
@@ -181,9 +201,9 @@ class ContainerStats(threading.Thread):
         while not self.stop:
             try:
                 if not self._feed:
-                    self._feed = self._client.stats(self._container)
+                    self._feed = self._client.stats(self._container,
+                                                    decode=True)
                 self._stats = self._feed.next()
-
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
@@ -213,7 +233,7 @@ class ContainerStats(threading.Thread):
         recently read stats data, parsed as JSON, for the container."""
         while not self._stats:
             pass
-        return json.loads(self._stats)
+        return self._stats
 
 
 class DockerPlugin:
@@ -228,10 +248,7 @@ class DockerPlugin:
     # The stats endpoint is only supported by API >= 1.17
     MIN_DOCKER_API_VERSION = '1.17'
 
-    CLASSES = {'network': NetworkStats,
-               'blkio_stats': BlkioStats,
-               'cpu_stats': CpuStats,
-               'memory_stats': MemoryStats}
+    CLASSES = [NetworkStats, BlkioStats, CpuStats, MemoryStats]
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
@@ -248,8 +265,8 @@ class DockerPlugin:
 
     def init_callback(self):
         self.client = docker.Client(
-                base_url=self.docker_url,
-                version=DockerPlugin.MIN_DOCKER_API_VERSION)
+            base_url=self.docker_url,
+            version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
 
         # Check API version for stats endpoint support.
@@ -284,7 +301,11 @@ class DockerPlugin:
 
         for container in containers:
             try:
-                container['Name'] = container['Names'][0][1:]
+                for name in container['Names']:
+                    # Containers can be linked and the container name is not
+                    # necessarly the first entry of the list
+                    if not re.match("/.*/", name):
+                        container['Name'] = name[1:]
 
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
@@ -293,10 +314,9 @@ class DockerPlugin:
 
                 # Get and process stats from the container.
                 stats = self.stats[container['Id']].stats
-                for key, value in stats.items():
-                    klass = self.CLASSES.get(key)
-                    if klass:
-                        klass.read(container, value, stats['read'])
+                t = stats['read']
+                for klass in self.CLASSES:
+                    klass.read(container, stats, t)
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
@@ -327,6 +347,9 @@ if __name__ == '__main__':
 
         def info(self, msg):
             print 'INFO:', msg
+
+        def register_read(self, docker_plugin):
+            pass
 
     collectd = ExecCollectd()
     plugin = DockerPlugin()
