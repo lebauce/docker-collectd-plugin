@@ -26,7 +26,6 @@
 import dateutil.parser
 from distutils.version import StrictVersion
 import docker
-import json
 import os
 import threading
 import time
