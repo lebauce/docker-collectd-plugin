@@ -135,7 +135,7 @@ class CpuStats(Stats):
             cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
             system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
             if system_delta > 0 and cpu_delta > 0:
-                cpu_percent = 100 * cpu_delta / system_delta * len(percpu)
+                cpu_percent = 100.0 * cpu_delta / system_delta * len(percpu)
         cls.emit(container, "cpu.percent", ["%.2f" % (cpu_percent)], t=t)
 
 
