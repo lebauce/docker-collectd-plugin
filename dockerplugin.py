@@ -55,10 +55,7 @@ class Stats:
         if type_instance:
             val.type_instance = type_instance
 
-        if t:
-            val.time = time.mktime(dateutil.parser.parse(t).timetuple())
-        else:
-            val.time = time.time()
+        val.time = time.time()
 
         # With some versions of CollectD, a dummy metadata map must to be added
         # to each value for it to be correctly serialized to JSON by the
