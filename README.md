@@ -44,6 +44,19 @@ LoadPlugin python
   </Module>
 </Plugin>
 ```
+*Warning* : 
+Adding a custom `TypesDB` can raise a collectd error displaying :
+```
+Unhandled python exception in read callback: TypeError: Dataset gauge not found
+```
+To fix this you will have to explicitly add the path to the default `types.db` file. For instance, on `debian-jessie`, this will look like :
+```
+TypesDB "/usr/share/collectd/docker-collectd-plugin/dockerplugin.db"
+TypesDB "/usr/share/collectd/types.db"
+```
+
+
+
 
 ## Requirements
 
