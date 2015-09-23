@@ -4,17 +4,31 @@ A [Docker](http://docker.io) plugin for [collectd](http://collectd.org)
 using [docker-py](https://github.com/docker/docker-py) and collectd's
 [Python plugin](http://collectd.org/documentation/manpages/collectd-python.5.shtml).
 
-This uses the new stats API (https://github.com/docker/docker/pull/9984)
-introduced by Docker 1.5.
+This uses the new stats API [introduced by
+\#9984](https://github.com/docker/docker/pull/9984) in Docker 1.5.
 
-The following container stats are reported for each container:
+The following container stats are gathered for each container, with
+examples of some of the metric names reported:
 
-* Network bandwidth
-* Memory usage
-* CPU usage
-* Block IO
+* Network bandwidth:
+ * `network.usage.rx_bytes`
+ * `network.usage.tx_bytes`
+ * ...
+* Memory usage:
+ * `memory.usage.total`
+ * `memory.usage.limit`
+ * ...
+* CPU usage:
+ * `cpu.usage.total`
+ * `cpu.usage.system`
+ * ...
+* Block IO:
+ * `blockio.io_service_bytes_recursive-<major>-<minor>.read`
+ * `blockio.io_service_bytes_recursive-<major>-<minor>.write`
+ * ...
 
-The name of the container is used for the `plugin_instance` dimension.
+All metrics are reported with a `plugin:docker` dimension, and the name
+of the container is used for the `plugin_instance` dimension.
 
 ## Install
 
