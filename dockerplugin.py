@@ -108,7 +108,7 @@ class BlkioStats(Stats):
 
 class CpuStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, pre_stats, stats, t):
         cpu_stats = stats['cpu_stats']
         cpu_usage = cpu_stats['cpu_usage']
 
@@ -128,13 +128,21 @@ class CpuStats(Stats):
         # CPU Percentage based on calculateCPUPercent Docker method
         # https://github.com/docker/docker/blob/master/api/client/stats.go
         cpu_percent = 0.0
-        if 'precpu_stats' in stats:
-            precpu_stats = stats['precpu_stats']
-            precpu_usage = precpu_stats['cpu_usage']
-            cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
-            system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
+
+        cur_stats_t = time.mktime(dateutil.parser.parse(stats['read']).timetuple())
+
+        if pre_stats:
+            precpu_total_usage = pre_stats['cpu_stats']['cpu_usage']['total_usage']
+            precpu_system_usage = pre_stats['cpu_stats']['system_cpu_usage']
+            pre_stats_t = time.mktime(dateutil.parser.parse(pre_stats['read']).timetuple())
+
+            cpu_delta = stats['cpu_stats']['cpu_usage']['total_usage'] - precpu_total_usage
+            system_delta = stats['cpu_stats']['system_cpu_usage'] - precpu_system_usage
+            t_delta = cur_stats_t - pre_stats_t
+
             if system_delta > 0 and cpu_delta > 0:
-                cpu_percent = 100.0 * cpu_delta / system_delta * len(percpu)
+                cpu_percent = 100.0 * float(cpu_delta) / system_delta * len(percpu)
+
         cls.emit(container, "cpu.percent", ["%.2f" % (cpu_percent)], t=t)
 
 
@@ -151,6 +159,10 @@ class MemoryStats(Stats):
         mem_stats = stats['memory_stats']
         values = [mem_stats['limit'], mem_stats['max_usage'],
                   mem_stats['usage']]
+
+        collectd.info("mem_values: {}".format(values))
+
+
         cls.emit(container, 'memory.usage', values, t=t)
 
         for key, value in mem_stats['stats'].items():
@@ -189,6 +201,8 @@ class ContainerStats(threading.Thread):
         self._client = client
         self._feed = None
         self._stats = None
+        self._pre_stats = None
+        self._tmp_stats = None
 
         # Automatically start stats reading thread
         self.start()
@@ -198,12 +212,16 @@ class ContainerStats(threading.Thread):
                       .format(container=_c(self._container)))
 
         failures = 0
+        count = 0
+
         while not self.stop:
             try:
                 if not self._feed:
                     self._feed = self._client.stats(self._container,
                                                     decode=True)
                 self._stats = self._feed.next()
+                self._pre_stats = self._tmp_stats
+
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
@@ -224,6 +242,8 @@ class ContainerStats(threading.Thread):
                 # survive transient Docker daemon errors/unavailabilities.
                 self._feed = None
 
+            self._tmp_stats = self._stats
+
         collectd.info('Stopped stats gathering for {container}.'
                       .format(container=_c(self._container)))
 
@@ -235,6 +255,10 @@ class ContainerStats(threading.Thread):
             pass
         return self._stats
 
+    @property
+    def pre_stats(self):
+        return self._pre_stats
+
 
 class DockerPlugin:
     """
@@ -244,6 +268,7 @@ class DockerPlugin:
 
     DEFAULT_BASE_URL = 'unix://var/run/docker.sock'
     DEFAULT_DOCKER_TIMEOUT = 5
+    DEFAULT_INTERVAL = 1
 
     # The stats endpoint is only supported by API >= 1.17
     MIN_DOCKER_API_VERSION = '1.17'
@@ -254,6 +279,7 @@ class DockerPlugin:
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
         self.capture = False
+        self.interval = DockerPlugin.DEFAULT_INTERVAL
         self.stats = {}
 
     def configure_callback(self, conf):
@@ -262,6 +288,9 @@ class DockerPlugin:
                 self.docker_url = node.values[0]
             elif node.key == 'Timeout':
                 self.timeout = int(node.values[0])
+            elif node.key == 'Interval':
+                self.interval = int(float(node.values[0]))
+            collectd.warning('Unknown config key: %s.' % (node.key))
 
     def init_callback(self):
         self.client = docker.Client(
@@ -281,12 +310,14 @@ class DockerPlugin:
                              .format(url=self.docker_url))
             return False
 
-        collectd.register_read(self.read_callback)
+        collectd.register_read(self.read_callback, self.interval)
         collectd.info(('Collecting stats about Docker containers from {url} '
-                       '(API version {version}; timeout: {timeout}s).')
+                       '(API version {version}; timeout: {timeout}s; interval: {interval}s).')
                       .format(url=self.docker_url,
                               version=version,
-                              timeout=self.timeout))
+                              timeout=self.timeout,
+                              interval = self.interval))
+
         return True
 
     def read_callback(self):
@@ -314,9 +345,14 @@ class DockerPlugin:
 
                 # Get and process stats from the container.
                 stats = self.stats[container['Id']].stats
+                pre_stats = self.stats[container['Id']].pre_stats
+
                 t = stats['read']
                 for klass in self.CLASSES:
-                    klass.read(container, stats, t)
+                    if klass == CpuStats:
+                        klass.read(container, pre_stats, stats, t)
+                    else:
+                        klass.read(container, stats, t)
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
@@ -335,8 +371,8 @@ if __name__ == '__main__':
             identifier += '/' + self.type
             if getattr(self, 'type_instance', None):
                 identifier += '-' + self.type_instance
-            print 'PUTVAL', identifier, \
-                  ':'.join(map(str, [int(self.time)] + self.values))
+            #print 'PUTVAL', identifier, \
+            #      ':'.join(map(str, [int(self.time)] + self.values))
 
     class ExecCollectd:
         def Values(self):
@@ -348,7 +384,7 @@ if __name__ == '__main__':
         def info(self, msg):
             print 'INFO:', msg
 
-        def register_read(self, docker_plugin):
+        def register_read(self, docker_plugin, interval):
             pass
 
     collectd = ExecCollectd()
