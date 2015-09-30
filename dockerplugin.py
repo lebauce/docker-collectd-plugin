@@ -27,7 +27,9 @@ import dateutil.parser
 from distutils.version import StrictVersion
 import docker
 import json
+import jsonpath_rw
 import os
+import traceback
 import threading
 import time
 import sys
@@ -40,15 +42,26 @@ def _c(c):
     is <7-digit ID>/<name>."""
     if type(c) == str or type(c) == unicode:
         return c[:7]
-    return '{id}/{name}'.format(id=c['Id'][:7], name=c['Name'])
+    return '{id}/{name}'.format(id=c['Id'][:7], name=c.get('Name', c['Names']))
+
+
+def _d(d):
+    """Formats a dictionary of key/value pairs as a comma-delimited list of
+    key=value tokens."""
+    return ','.join(['='.join(p) for p in d.items()])
 
 
 class Stats:
     @classmethod
-    def emit(cls, container, type, value, t=None, type_instance=None):
+    def emit(cls, container, dimensions, type, value, t=None,
+             type_instance=None):
         val = collectd.Values()
         val.plugin = 'docker'
         val.plugin_instance = container['Name']
+
+        # Add additional extracted dimensions through plugin_instance.
+        if dimensions:
+            val.plugin_instance += '[{dims}]'.format(dims=_d(dimensions))
 
         if type:
             val.type = type
@@ -70,13 +83,13 @@ class Stats:
         val.dispatch()
 
     @classmethod
-    def read(cls, container, stats):
+    def read(cls, container, dimensions, stats, t):
         raise NotImplementedError
 
 
 class BlkioStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, dimensions, stats, t):
         for key, values in stats.items():
             # Block IO stats are reported by block device (with major/minor
             # numbers). We need to group and report the stats of each block
@@ -92,12 +105,12 @@ class BlkioStats(Stats):
 
             for type_instance, values in blkio_stats.items():
                 if len(values) == 5:
-                    cls.emit(container, 'blkio', values,
+                    cls.emit(container, dimensions, 'blkio', values,
                              type_instance=type_instance, t=t)
                 elif len(values) == 1:
                     # For some reason, some fields contains only one value and
                     # the 'op' field is empty. Need to investigate this
-                    cls.emit(container, 'blkio.single', values,
+                    cls.emit(container, dimensions, 'blkio.single', values,
                              type_instance=key, t=t)
                 else:
                     collectd.warn(('Unexpected number of blkio stats for '
@@ -107,38 +120,100 @@ class BlkioStats(Stats):
 
 class CpuStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, dimensions, stats, t):
         cpu_usage = stats['cpu_usage']
         percpu = cpu_usage['percpu_usage']
         for cpu, value in enumerate(percpu):
-            cls.emit(container, 'cpu.percpu.usage', [value],
+            cls.emit(container, dimensions, 'cpu.percpu.usage', [value],
                      type_instance='cpu%d' % (cpu,), t=t)
 
         items = sorted(stats['throttling_data'].items())
-        cls.emit(container, 'cpu.throttling_data', [x[1] for x in items], t=t)
+        cls.emit(container, dimensions, 'cpu.throttling_data',
+                 [x[1] for x in items], t=t)
 
         values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
                   cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
-        cls.emit(container, 'cpu.usage', values, t=t)
+        cls.emit(container, dimensions, 'cpu.usage', values, t=t)
 
 
 class NetworkStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, dimensions, stats, t):
         items = stats.items()
         items.sort()
-        cls.emit(container, 'network.usage', [x[1] for x in items], t=t)
+        cls.emit(container, dimensions, 'network.usage',
+                 [x[1] for x in items], t=t)
 
 
 class MemoryStats(Stats):
     @classmethod
-    def read(cls, container, stats, t):
+    def read(cls, container, dimensions, stats, t):
         values = [stats['limit'], stats['max_usage'], stats['usage']]
-        cls.emit(container, 'memory.usage', values, t=t)
+        cls.emit(container, dimensions, 'memory.usage', values, t=t)
 
         for key, value in stats['stats'].items():
-            cls.emit(container, 'memory.stats', [value],
+            cls.emit(container, dimensions, 'memory.stats', [value],
                      type_instance=key, t=t)
+
+
+class DimensionsProvider:
+    """Helper class for performing dimension extraction from a given container.
+
+    Dimensions to extract are specified via a "spec" following the syntax
+    "<provider>:<source>". The provider defines the means by which the
+    dimension value is extracted, and the source gives some information as to
+    where to find the dimension value through this provider.
+
+    Extracting dimensions values from the container's environment or from its
+    JSON Docker details are supported, as well as specifying direct, raw
+    values.
+    """
+
+    SUPPORTED_PROVIDERS = ['inspect', 'env', 'raw']
+
+    def __init__(self, specs):
+        self._specs = specs
+        self._validate()
+
+    def _validate(self):
+        """Validate the configured dimensions extraction specs."""
+        for name, spec in self._specs.items():
+            try:
+                provider, _ = spec.split(':')
+            except:
+                raise Exception('Invalid configuration of provider for '
+                                'dimension {dim}: {spec}'
+                                .format(dim=name, spec=spec))
+
+            if provider not in DimensionsProvider.SUPPORTED_PROVIDERS:
+                raise Exception('Unknown dimnension provider {provider} '
+                                'for dimension {dim}!'
+                                .format(provider=provider, dim=name))
+
+    def extract(self, client, container):
+        dimensions = {}
+
+        for name, spec in self._specs.items():
+            provider, source = spec.split(':')
+            value = None
+
+            if provider == 'inspect' or provider == 'env':
+                raw = client.inspect_container(container)
+                env = dict((k, v) for k, v in map(lambda e: e.split('='),
+                                                  raw['Config']['Env']))
+
+                if provider == 'inspect':
+                    match = jsonpath_rw.parse(source).find(raw)
+                    value = str(match[0].value) if match else None
+                elif provider == 'env':
+                    value = env.get(source)
+            elif provider == 'raw':
+                value = source
+
+            if value:
+                dimensions[name] = value
+
+        return dimensions
 
 
 class ContainerStats(threading.Thread):
@@ -160,7 +235,7 @@ class ContainerStats(threading.Thread):
     second), and make the most recently read data available in a variable.
     """
 
-    def __init__(self, container, client):
+    def __init__(self, container, dimensions, client):
         threading.Thread.__init__(self)
         self.daemon = True
         self.stop = False
@@ -170,12 +245,19 @@ class ContainerStats(threading.Thread):
         self._feed = None
         self._stats = None
 
+        # Extract dimensions values
+        self.dimensions = {}
+        if dimensions:
+            self.dimensions.update(dimensions.extract(self._client,
+                                                      self._container))
+
         # Automatically start stats reading thread
         self.start()
 
     def run(self):
-        collectd.info('Starting stats gathering for {container}.'
-                      .format(container=_c(self._container)))
+        collectd.info('Starting stats gathering for {container} ({dims}).'
+                      .format(container=_c(self._container),
+                              dims=_d(self.dimensions)))
 
         failures = 0
         while not self.stop:
@@ -237,14 +319,33 @@ class DockerPlugin:
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
         self.capture = False
+        self.dimensions = None
         self.stats = {}
 
+    def _container_name(self, names):
+        """Extract the true container name from the list of container names
+        sent back by the Docker API. The list of container names contains the
+        names of linked containers too ('/other/alias' for example), but we're
+        only interested in the true container's name, '/foo'."""
+        for name in names:
+            split = name.split('/')
+            if len(split) == 2:
+                return split[1]
+        raise Exception('Cannot find valid container name in {names}'
+                        .format(names=names))
+
     def configure_callback(self, conf):
+        specs = {}
+
         for node in conf.children:
             if node.key == 'BaseURL':
                 self.docker_url = node.values[0]
             elif node.key == 'Timeout':
                 self.timeout = int(node.values[0])
+            elif node.key == 'Dimension':
+                specs[node.values[0]] = node.values[1]
+
+        self.dimensions = DimensionsProvider(specs)
 
     def init_callback(self):
         self.client = docker.Client(
@@ -284,23 +385,27 @@ class DockerPlugin:
 
         for container in containers:
             try:
-                container['Name'] = container['Names'][0][1:]
+                container['Name'] = self._container_name(container['Names'])
 
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
-                    self.stats[container['Id']] = ContainerStats(container,
-                                                                 self.client)
+                    self.stats[container['Id']] = \
+                            ContainerStats(container, self.dimensions,
+                                           self.client)
+
+                cstats = self.stats[container['Id']]
 
                 # Get and process stats from the container.
-                stats = self.stats[container['Id']].stats
-                for key, value in stats.items():
+                for key, value in cstats.stats.items():
                     klass = self.CLASSES.get(key)
                     if klass:
-                        klass.read(container, value, stats['read'])
+                        klass.read(container, cstats.dimensions, value,
+                                   cstats.stats['read'])
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
                                  .format(container=_c(container), msg=e))
+                collectd.warning(traceback.format_exc())
 
 
 # Command-line execution
@@ -322,6 +427,9 @@ if __name__ == '__main__':
         def Values(self):
             return ExecCollectdValues()
 
+        def register_read(self, callback):
+            pass
+
         def warning(self, msg):
             print 'WARNING:', msg
 
@@ -333,8 +441,13 @@ if __name__ == '__main__':
     if len(sys.argv) > 1:
         plugin.docker_url = sys.argv[1]
 
-    if plugin.init_callback():
+    if not plugin.init_callback():
+        sys.exit(1)
+
+    while True:
         plugin.read_callback()
+        time.sleep(5)
+
 
 # Normal plugin execution via CollectD
 else:
