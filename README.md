@@ -59,8 +59,62 @@ LoadPlugin python
 </Plugin>
 ```
 
+### Extracting additional dimensions
+
+The plugin has the ability to extract additional information about or
+from the monitored container and report them as extra dimensions on your
+metrics. The general syntax is via the `Dimension` directive in the
+`Module` section:
+
+```
+<Module dockerplugin>
+  ...
+  Dimension "<name>" "<spec>"
+</Module>
+```
+
+Where `<name>` is the name of the dimension you want to add, and
+`<spec>` describes how the value for this dimension should be extracted
+by the plugin. You can extract:
+
+- manually specified dimension values, with `raw:foobar`;
+- container environment variable values, with `env:ENV_VAR_NAME`;
+- any container detail value from Docker, with `inspect:Path.In.Json`.
+
+Here are some examples:
+
+```
+Dimension "mesos_task_id" "env:MESOS_TASK_ID"
+Dimension "image" "inspect:Config.Image"
+Dimension "foo" "raw:bar"
+```
+
+For `inspect`, the parameter is expected to be a JSONPath matcher giving
+the path to the value you're interested in within the JSON output of
+`docker inspect` (or `/containers/<container>/json` via the remote API).
+See https://github.com/kennknowles/python-jsonpath-rw for more details
+about the JSONPath syntax.
+
+### Important note about additional dimensions
+
+The additional dimensions extracted by this `docker-collectd-plugin` are
+packed into the `plugin_instance` dimension using the following syntax:
+
+```
+plugin_instance:value[dim1=value1,dim2=value2,...]
+```
+
+Because CollectD limits the size of the reported fields to 64 total
+characters, trying to pack too many additional dimensions will result in
+the whole constructed string from being truncated, making parsing those
+additional dimensions correctly on the target metrics system impossible.
+You should make sure that the total size of your `plugin_instance`
+value, including all additional dimensions names and values, does not
+exceed 64 characters.
+
 ## Requirements
 
-* docker-py
-* python-dateutil
-* docker 1.5+
+* Docker 1.5+
+* `docker-py`
+* `jsonpath_rw`
+* `python-dateutil`
