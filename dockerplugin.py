@@ -150,7 +150,7 @@ class NetworkStats(Stats):
     @classmethod
     def read(cls, container, stats, t):
         items = sorted(stats['network'].items())
-        cls.emit(container, 'network.usage', [x[1] for x in items], t=t)
+        cls.emit(container, 'network.usage', [stats['network']['rx_bytes'], stats['network']['tx_bytes']], t=t)
 
 
 class MemoryStats(Stats):
@@ -159,9 +159,6 @@ class MemoryStats(Stats):
         mem_stats = stats['memory_stats']
         values = [mem_stats['limit'], mem_stats['max_usage'],
                   mem_stats['usage']]
-
-        collectd.info("mem_values: {}".format(values))
-
 
         cls.emit(container, 'memory.usage', values, t=t)
 
@@ -257,6 +254,7 @@ class ContainerStats(threading.Thread):
 
     @property
     def pre_stats(self):
+
         return self._pre_stats
 
 
@@ -290,7 +288,8 @@ class DockerPlugin:
                 self.timeout = int(node.values[0])
             elif node.key == 'Interval':
                 self.interval = int(float(node.values[0]))
-            collectd.warning('Unknown config key: %s.' % (node.key))
+            else:
+                collectd.warning('Unknown config key: {}'.format(node.key))
 
     def init_callback(self):
         self.client = docker.Client(
