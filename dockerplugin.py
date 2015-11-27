@@ -33,6 +33,8 @@ import sys
 import re
 
 
+STREAM_DOCKER_PY_VERSION=(1, 6, 0)
+
 def _c(c):
     """A helper method for representing a container in messages. If the given
     argument is a string, it is assumed to be the container's ID and only the
@@ -180,7 +182,7 @@ class ContainerStats(threading.Thread):
     second), and make the most recently read data available in a variable.
     """
 
-    def __init__(self, container, client):
+    def __init__(self, container, client, stream):
         threading.Thread.__init__(self)
         self.daemon = True
         self.stop = False
@@ -189,6 +191,7 @@ class ContainerStats(threading.Thread):
         self._client = client
         self._feed = None
         self._stats = None
+        self._stream = stream
 
         # Automatically start stats reading thread
         self.start()
@@ -200,10 +203,15 @@ class ContainerStats(threading.Thread):
         failures = 0
         while not self.stop:
             try:
-                if not self._feed:
-                    self._feed = self._client.stats(self._container,
-                                                    decode=True)
-                self._stats = self._feed.next()
+
+                if not self._stream:
+                    if not self._feed:
+                        self._feed = self._client.stats(self._container,
+                                                         decode=True)
+                    self._stats = self._feed.next()
+                else:
+                    self._stats = self._client.stats(self._container,
+                                                     decode=True,stream=False)
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
@@ -255,6 +263,12 @@ class DockerPlugin:
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
         self.capture = False
         self.stats = {}
+        self.stream = False
+        s_version = re.match('([\d.]+)', docker.__version__)
+        version = tuple([int(x) for x in s_version.group(1).split('.')])
+        if version >= STREAM_DOCKER_PY_VERSION:
+            self.stream = True
+            collectd.info('Docker stats use stream')
 
     def configure_callback(self, conf):
         for node in conf.children:
@@ -310,7 +324,8 @@ class DockerPlugin:
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
                     self.stats[container['Id']] = ContainerStats(container,
-                                                                 self.client)
+                                                                 self.client,
+                                                                 self.stream)
 
                 # Get and process stats from the container.
                 stats = self.stats[container['Id']].stats
