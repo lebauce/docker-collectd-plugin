@@ -199,7 +199,7 @@ class DimensionsProvider:
 
             if provider == 'inspect' or provider == 'env':
                 raw = client.inspect_container(container)
-                env = dict((k, v) for k, v in map(lambda e: e.split('='),
+                env = dict((k, v) for k, v in map(lambda e: e.split('=', 1),
                                                   raw['Config']['Env']))
 
                 if provider == 'inspect':
