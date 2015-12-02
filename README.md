@@ -44,7 +44,7 @@ of the container is used for the `plugin_instance` dimension.
 
 Add the following to your collectd config:
 
-```
+```apache
 TypesDB "/usr/share/collectd/docker-collectd-plugin/dockerplugin.db"
 LoadPlugin python
 
@@ -66,7 +66,7 @@ from the monitored container and report them as extra dimensions on your
 metrics. The general syntax is via the `Dimension` directive in the
 `Module` section:
 
-```
+```apache
 <Module dockerplugin>
   ...
   Dimension "<name>" "<spec>"
@@ -83,7 +83,7 @@ by the plugin. You can extract:
 
 Here are some examples:
 
-```
+```apache
 Dimension "mesos_task_id" "env:MESOS_TASK_ID"
 Dimension "image" "inspect:Config.Image"
 Dimension "foo" "raw:bar"
@@ -111,6 +111,76 @@ additional dimensions correctly on the target metrics system impossible.
 You should make sure that the total size of your `plugin_instance`
 value, including all additional dimensions names and values, does not
 exceed 64 characters.
+
+## How to send only basic metrics
+
+A lot of the metrics reported by this plugin are advanced statistics you
+may not necessarily need. CollectD makes it easy to filter metrics you
+don't want to record or send. The first step is to define a `PostCache`
+chain with a rule to pass the Docker CollectD plugin's metrics through a
+custom filtering chain.
+
+```apache
+LoadPlugin match_regex
+
+<Chain "PostCache">
+  <Rule>
+    <Match "regex">
+      Plugin "^docker$"
+    </Match>
+    <Target "jump">
+      Chain "FilterOutDetailedDockerStats"
+    </Target>
+  </Rule>
+
+  Target "write"
+</Chain>
+```
+
+*Note:* make sure you have exactly _one_ `<Chain "PostCache">` section;
+CollectD will consider the first one it sees, and ignore any other. If
+you already have a section, simply add the `<Rule>` block that jumps to
+the `FilterOutDetailedDockerStats` sub-chain to your existing
+`PostCache` chain.
+
+You can then use the following filtering chain to only allow the "basic"
+CPU, memory, network and block I/O metrics to go through, and drop
+everything else from the plugin:
+
+```apache
+<Chain "FilterOutDetailedDockerStats">
+  <Rule "CpuUsage">
+    <Match "regex">
+      Type "^cpu.usage$"
+    </Match>
+    Target "return"
+  </Rule>
+  <Rule "MemoryUsage">
+    <Match "regex">
+      Type "^memory.usage$"
+    </Match>
+    Target "return"
+  </Rule>
+  <Rule "NetworkUsage">
+    <Match "regex">
+      Type "^network.usage$"
+    </Match>
+    Target "return"
+  </Rule>
+  <Rule "BlockIO">
+    <Match "regex">
+      Type "^blkio$"
+      TypeInstance "^io_service_bytes_recursive-.*"
+    </Match>
+    Target "return"
+  </Rule>
+
+  Target "stop"
+</Chain>
+```
+
+For convenience, you'll find those configuration blocks in the provided
+sample configuration file [`dockerplugin.conf`](dockerplugin.conf).
 
 ## Requirements
 
