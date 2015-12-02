@@ -32,8 +32,8 @@ import time
 import sys
 import re
 
+STREAM_DOCKER_PY_VERSION = (1, 6, 0)
 
-STREAM_DOCKER_PY_VERSION=(1, 6, 0)
 
 def _c(c):
     """A helper method for representing a container in messages. If the given
@@ -207,11 +207,11 @@ class ContainerStats(threading.Thread):
                 if not self._stream:
                     if not self._feed:
                         self._feed = self._client.stats(self._container,
-                                                         decode=True)
+                                                        decode=True)
                     self._stats = self._feed.next()
                 else:
                     self._stats = self._client.stats(self._container,
-                                                     decode=True,stream=False)
+                                                     decode=True, stream=False)
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
