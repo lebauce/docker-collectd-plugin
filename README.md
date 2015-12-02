@@ -1,5 +1,7 @@
 # docker-collectd-plugin
 
+[![Build Status](https://travis-ci.org/lebauce/docker-collectd-plugin.svg?branch=master)](https://travis-ci.org/lebauce/docker-collectd-plugin)
+
 A [Docker](http://docker.io) plugin for [collectd](http://collectd.org)
 using [docker-py](https://github.com/docker/docker-py) and collectd's
 [Python plugin](http://collectd.org/documentation/manpages/collectd-python.5.shtml).
