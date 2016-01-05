@@ -217,11 +217,10 @@ class ContainerStats(threading.Thread):
                 # stop the thread. If the container is still there, we'll spin
                 # up a new stats gathering thread the next time read_callback()
                 # gets called by CollectD.
-                time.sleep(5)
+                time.sleep(1)
                 failures += 1
                 if failures > 3:
-                    failures = 0 
-                    #self.stop = True
+                    self.stop = True
 
                 # Marking the feed as dead so we'll attempt to recreate it and
                 # survive transient Docker daemon errors/unavailabilities.
