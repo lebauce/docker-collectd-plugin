@@ -303,21 +303,21 @@ class DockerPlugin:
 
         for container in containers:
             try:
-             
-                 # Get mesos task id from the Env (if available)
-                 inspect_result = self.client.inspect_container(container)
-                 apptaskid = ''
-                 try:
-                     envVars = inspect_result.get('Config').get('Env')
-                     for var in envVars:
-                         if var.startswith('MESOS_TASK_ID=') :
-                             apptaskid = var[var.index('=')+1:]
-                             break
-                 except KeyError:
-                     # Ignore. The inspect did not return an Env. This is odd. Let's log this and continue
-                     collectd.error("Could not get Config or Env for container " + container[id])
-                     pass
-     
+
+                # Get mesos task id from the Env (if available)
+                inspect_result = self.client.inspect_container(container)
+                apptaskid = ''
+                try:
+                    envVars = inspect_result.get('Config').get('Env')
+                    for var in envVars:
+                        if var.startswith('MESOS_TASK_ID=') :
+                            apptaskid = var[var.index('=')+1:]
+                            break
+                except KeyError:
+                    # Ignore. The inspect did not return an Env. This is odd. Let's log this and continue
+                    collectd.error("Could not get Config or Env for container " + container[id])
+                    pass
+
                 for name in container['Names']:
                     # Containers can be linked and the container name is not
                     # necessarly the first entry of the list
