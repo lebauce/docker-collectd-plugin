@@ -217,9 +217,9 @@ class ContainerStats(threading.Thread):
                 # stop the thread. If the container is still there, we'll spin
                 # up a new stats gathering thread the next time read_callback()
                 # gets called by CollectD.
-                time.sleep(1)
+                time.sleep(self._client.sleep_interval)
                 failures += 1
-                if failures > 3:
+                if failures > self._client.failure_count:
                     self.stop = True
 
                 # Marking the feed as dead so we'll attempt to recreate it and
@@ -247,14 +247,19 @@ class DockerPlugin:
     DEFAULT_BASE_URL = 'unix://var/run/docker.sock'
     DEFAULT_DOCKER_TIMEOUT = 5
 
+    DEFAULT_FAILURE_COUNT  = 3
+    DEFAULT_SLEEP_INTERVAL = 1
+
     # The stats endpoint is only supported by API >= 1.17
     MIN_DOCKER_API_VERSION = '1.17'
 
     CLASSES = [NetworkStats, BlkioStats, CpuStats, MemoryStats]
 
-    def __init__(self, docker_url=None):
+    def __init__(self, docker_url=None, failure_count=None, sleep_interval=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
+        self.failure_count = failure_count or DockerPlugin.DEFAULT_FAILURE_COUNT
+        self.sleep_interval = sleep_interval or DockerPlugin.DEFAULT_SLEEP_INTERVAL
         self.capture = False
         self.stats = {}
 
@@ -262,6 +267,10 @@ class DockerPlugin:
         for node in conf.children:
             if node.key == 'BaseURL':
                 self.docker_url = node.values[0]
+            elif node.key == 'failure_count':
+                self.failure_count = int(node.values[0])
+            elif node.key == 'sleep_interval':
+                self.sleep_interval = int(node.values[0])
             elif node.key == 'Timeout':
                 self.timeout = int(node.values[0])
 
@@ -270,6 +279,8 @@ class DockerPlugin:
             base_url=self.docker_url,
             version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
+        self.client.failure_count = self.failure_count
+        self.client.sleep_interval = self.sleep_interval
 
         # Check API version for stats endpoint support.
         try:
