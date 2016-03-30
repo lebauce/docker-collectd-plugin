@@ -321,17 +321,18 @@ class DockerPlugin:
                     if not re.match("/.*/", name):
                         container['Name'] = name[1:]
 
+                if container['Id'] in self.stats:
+                    # Get and process stats from the container if its NOT new
+                    stats = self.stats[container['Id']].stats
+                    t = stats['read']
+                    for klass in self.CLASSES:
+                        klass.read(container, stats, t)
+
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
                     self.stats[container['Id']] = ContainerStats(container,
                                                                  self.client,
                                                                  self.stream)
-
-                # Get and process stats from the container.
-                stats = self.stats[container['Id']].stats
-                t = stats['read']
-                for klass in self.CLASSES:
-                    klass.read(container, stats, t)
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
