@@ -169,8 +169,8 @@ class ReadContainerStats(threading.Thread):
     '''
     A worker that continuously pop container out of a Queue and query stats
     from the Docker Api, then store the result in a python dict
-    We need this class to be sure that we will read all containers stats without
-    overloading the docker deaemon.
+    We need this class to be sure that we will read all containers stats
+    without overloading the docker deaemon.
     '''
     def __init__(self, client, stream, queue, _id):
         threading.Thread.__init__(self)
@@ -195,7 +195,8 @@ class ReadContainerStats(threading.Thread):
                     c_stats[container['Id']] = stats._feed.next()
                 else:
                     c_stats[container['Id']] = self._client.stats(container,
-                                                                  decode=True, stream=False)
+                                                                  decode=True,
+                                                                  stream=False)
             except Exception, e:
                 collectd.warning('Error reading stats from {container}: {msg}'
                                  .format(container=_c(container), msg=e))
@@ -267,7 +268,8 @@ class DockerPlugin:
         collectd.info("Rate limit for Docker API is %d" % self.rate_limit)
 
         for i in (range(self.rate_limit)):
-            worker = ReadContainerStats(self.client, self.stream, self.queue, i)
+            worker = ReadContainerStats(self.client, self.stream, self.queue,
+                                        i)
             self.workers.append(worker)
         return True
 
@@ -287,9 +289,10 @@ class DockerPlugin:
         qsize = self.queue.qsize()
         if qsize > len(containers):
             queue = False
-            collectd.warning(('WARNING: The current queue size is bigger than the number of'
-                              'containers, considering increment the RateLimit in collectd.conf'
-                              '( Queue size = {qsize} for {len} containers')
+            collectd.warning(('WARNING: The current queue size is bigger than '
+                              'the number of containers, considering increment'
+                              ' the RateLimit in collectd.conf (Queue size = '
+                              '{qsize} for {len} containers)')
                              .format(qsize=qsize, len=len(containers)))
 
         for container in containers:
