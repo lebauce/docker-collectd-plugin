@@ -31,11 +31,11 @@ import Queue
 import time
 import sys
 import re
-import json
 
 STREAM_DOCKER_PY_VERSION = (1, 6, 0)
 
 c_stats = {}
+
 
 def _c(c):
     """A helper method for representing a container in messages. If the given
