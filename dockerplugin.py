@@ -23,6 +23,7 @@
 #
 # Requirements: docker-py
 
+import dateutil.parser
 from distutils.version import StrictVersion
 import docker
 import os
