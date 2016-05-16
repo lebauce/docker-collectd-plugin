@@ -51,109 +51,106 @@ def _d(d):
     return ','.join(['='.join(p) for p in d.items()])
 
 
-class Stats:
-    @classmethod
-    def emit(cls, container, dimensions, type, value, t=None,
-             type_instance=None):
-        val = collectd.Values()
-        val.plugin = 'docker'
-        val.plugin_instance = container['Name']
+def emit(container, dimensions, type, value, t=None,
+         type_instance=None):
+    """Emit a collected datapoint."""
+    val = collectd.Values()
+    val.plugin = 'docker'
+    val.plugin_instance = container['Name']
 
-        # Add additional extracted dimensions through plugin_instance.
-        if dimensions:
-            val.plugin_instance += '[{dims}]'.format(dims=_d(dimensions))
+    # Add additional extracted dimensions through plugin_instance.
+    if dimensions:
+        val.plugin_instance += '[{dims}]'.format(dims=_d(dimensions))
 
-        if type:
-            val.type = type
-        if type_instance:
-            val.type_instance = type_instance
+    if type:
+        val.type = type
+    if type_instance:
+        val.type_instance = type_instance
 
-        if t:
-            val.time = time.mktime(dateutil.parser.parse(t).timetuple())
-        else:
-            val.time = time.time()
+    if t:
+        val.time = time.mktime(dateutil.parser.parse(t).timetuple())
+    else:
+        val.time = time.time()
 
-        # With some versions of CollectD, a dummy metadata map must to be added
-        # to each value for it to be correctly serialized to JSON by the
-        # write_http plugin. See
-        # https://github.com/collectd/collectd/issues/716
-        val.meta = {'true': 'true'}
+    # With some versions of CollectD, a dummy metadata map must to be added
+    # to each value for it to be correctly serialized to JSON by the
+    # write_http plugin. See
+    # https://github.com/collectd/collectd/issues/716
+    val.meta = {'true': 'true'}
 
-        val.values = value
-        val.dispatch()
-
-    @classmethod
-    def read(cls, container, dimensions, stats, t):
-        raise NotImplementedError
+    val.values = value
+    val.dispatch()
 
 
-class BlkioStats(Stats):
-    @classmethod
-    def read(cls, container, dimensions, stats, t):
-        for key, values in stats.items():
-            # Block IO stats are reported by block device (with major/minor
-            # numbers). We need to group and report the stats of each block
-            # device independently.
-            blkio_stats = {}
-            for value in values:
-                k = '{key}-{major}-{minor}'.format(key=key,
-                                                   major=value['major'],
-                                                   minor=value['minor'])
-                if k not in blkio_stats:
-                    blkio_stats[k] = []
-                blkio_stats[k].append(value['value'])
+def read_blkio_stats(container, dimensions, stats, t):
+    """Process block I/O stats for a container."""
+    for key, values in stats.items():
+        # Block IO stats are reported by block device (with major/minor
+        # numbers). We need to group and report the stats of each block
+        # device independently.
+        blkio_stats = {}
+        for value in values:
+            k = '{key}-{major}-{minor}'.format(key=key,
+                                               major=value['major'],
+                                               minor=value['minor'])
+            if k not in blkio_stats:
+                blkio_stats[k] = []
+            blkio_stats[k].append(value['value'])
 
-            for type_instance, values in blkio_stats.items():
-                if len(values) == 5:
-                    cls.emit(container, dimensions, 'blkio', values,
-                             type_instance=type_instance, t=t)
-                elif len(values) == 1:
-                    # For some reason, some fields contains only one value and
-                    # the 'op' field is empty. Need to investigate this
-                    cls.emit(container, dimensions, 'blkio.single', values,
-                             type_instance=key, t=t)
-                else:
-                    collectd.warn(('Unexpected number of blkio stats for '
-                                   'container {container}!')
-                                  .format(container=_c(container)))
-
-
-class CpuStats(Stats):
-    @classmethod
-    def read(cls, container, dimensions, stats, t):
-        cpu_usage = stats['cpu_usage']
-        percpu = cpu_usage['percpu_usage']
-        for cpu, value in enumerate(percpu):
-            cls.emit(container, dimensions, 'cpu.percpu.usage', [value],
-                     type_instance='cpu%d' % (cpu,), t=t)
-
-        items = sorted(stats['throttling_data'].items())
-        cls.emit(container, dimensions, 'cpu.throttling_data',
-                 [x[1] for x in items], t=t)
-
-        values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
-                  cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
-        cls.emit(container, dimensions, 'cpu.usage', values, t=t)
-
-
-class NetworkStats(Stats):
-    @classmethod
-    def read(cls, container, dimensions, stats, t):
-        items = stats.items()
-        items.sort()
-        cls.emit(container, dimensions, 'network.usage',
-                 [x[1] for x in items], t=t)
-
-
-class MemoryStats(Stats):
-    @classmethod
-    def read(cls, container, dimensions, stats, t):
-        values = [stats['limit'], stats['max_usage'], stats['usage']]
-        cls.emit(container, dimensions, 'memory.usage', values, t=t)
-
-        for key, value in stats['stats'].items():
-            cls.emit(container, dimensions, 'memory.stats', [value],
+        for type_instance, values in blkio_stats.items():
+            if len(values) == 5:
+                emit(container, dimensions, 'blkio', values,
+                     type_instance=type_instance, t=t)
+            elif len(values) == 1:
+                # For some reason, some fields contains only one value and
+                # the 'op' field is empty. Need to investigate this
+                emit(container, dimensions, 'blkio.single', values,
                      type_instance=key, t=t)
+            else:
+                collectd.warn(('Unexpected number of blkio stats for '
+                               'container {container}!')
+                              .format(container=_c(container)))
+
+
+def read_cpu_stats(container, dimensions, stats, t):
+    """Process CPU utilization stats for a container."""
+    cpu_usage = stats['cpu_usage']
+    percpu = cpu_usage['percpu_usage']
+    for cpu, value in enumerate(percpu):
+        emit(container, dimensions, 'cpu.percpu.usage', [value],
+             type_instance='cpu%d' % (cpu,), t=t)
+
+    items = sorted(stats['throttling_data'].items())
+    emit(container, dimensions, 'cpu.throttling_data',
+         [x[1] for x in items], t=t)
+
+    values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
+              cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
+    emit(container, dimensions, 'cpu.usage', values, t=t)
+
+
+def read_network_stats(container, dimensions, stats, t):
+    """Process network utilization stats for a container."""
+    items = stats.items()
+    items.sort()
+    emit(container, dimensions, 'network.usage', [x[1] for x in items], t=t)
+
+
+def read_memory_stats(container, dimensions, stats, t):
+    """Process memory utilization stats for a container."""
+    values = [stats['limit'], stats['max_usage'], stats['usage']]
+    emit(container, dimensions, 'memory.usage', values, t=t)
+
+    detailed = stats.get('stats')
+    if detailed:
+        for key, value in detailed.items():
+            emit(container, dimensions, 'memory.stats', [value],
+                 type_instance=key, t=t)
+    else:
+        collectd.info(
+            ('No detailed memory stats available from container '
+             '{container}.')
+            .format(container=_c(container)))
 
 
 class DimensionsProvider:
@@ -293,9 +290,9 @@ class ContainerStats(threading.Thread):
     def stats(self):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
-        while not self._stats:
-            pass
-        return json.loads(self._stats)
+        if self._stats:
+            return json.loads(self._stats)
+        return None
 
 
 class DockerPlugin:
@@ -310,10 +307,11 @@ class DockerPlugin:
     # The stats endpoint is only supported by API >= 1.17
     MIN_DOCKER_API_VERSION = '1.17'
 
-    CLASSES = {'network': NetworkStats,
-               'blkio_stats': BlkioStats,
-               'cpu_stats': CpuStats,
-               'memory_stats': MemoryStats}
+    # TODO: add support for 'networks' from API >= 1.20 to get by-iface stats.
+    METHODS = {'network': read_network_stats,
+               'blkio_stats': read_blkio_stats,
+               'cpu_stats': read_cpu_stats,
+               'memory_stats': read_memory_stats}
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
@@ -394,13 +392,17 @@ class DockerPlugin:
                                            self.client)
 
                 cstats = self.stats[container['Id']]
+                stats = cstats.stats
+                read_at = stats.get('read') if stats else None
+                if not read_at:
+                    # No stats available yet; skipping container.
+                    continue
 
-                # Get and process stats from the container.
-                for key, value in cstats.stats.items():
-                    klass = self.CLASSES.get(key)
-                    if klass:
-                        klass.read(container, cstats.dimensions, value,
-                                   cstats.stats['read'])
+                # Process stats through each reader.
+                for key, method in self.METHODS.items():
+                    value = stats.get(key)
+                    if value:
+                        method(container, cstats.dimensions, value, read_at)
             except Exception, e:
                 collectd.warning(('Error getting stats for container '
                                   '{container}: {msg}')
