@@ -51,7 +51,7 @@ def _d(d):
     return ','.join(['='.join(p) for p in d.items()])
 
 
-def emit(container, dimensions, type, value, t=None,
+def emit(container, dimensions, point_type, value, t=None,
          type_instance=None):
     """Emit a collected datapoint."""
     val = collectd.Values()
@@ -62,8 +62,8 @@ def emit(container, dimensions, type, value, t=None,
     if dimensions:
         val.plugin_instance += '[{dims}]'.format(dims=_d(dimensions))
 
-    if type:
-        val.type = type
+    if point_type:
+        val.type = point_type
     if type_instance:
         val.type_instance = type_instance
 
