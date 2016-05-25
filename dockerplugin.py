@@ -68,7 +68,8 @@ def emit(container, dimensions, point_type, value, t=None,
         val.type_instance = type_instance
 
     if t:
-        val.time = time.mktime(dateutil.parser.parse(t).timetuple())
+        val.time = time.mktime(dateutil.parser.parse(t, ignoretz=True)
+                               .timetuple())
     else:
         val.time = time.time()
 
