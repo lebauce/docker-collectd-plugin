@@ -373,8 +373,13 @@ class DockerPlugin:
         return True
 
     def read_callback(self):
-        containers = [c for c in self.client.containers()
-                      if c['Status'].startswith('Up')]
+        try:
+            containers = [c for c in self.client.containers()
+                          if c['Status'].startswith('Up')]
+        except Exception as e:
+            containers = []
+            collectd.info("[dockerplugin]: Failed to retrieve containers from \
+Docker API: %s" % e)
 
         # Terminate stats gathering threads for containers that are not running
         # anymore.
