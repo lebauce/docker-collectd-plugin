@@ -24,6 +24,7 @@
 # Requirements: docker-py
 
 import dateutil.parser
+from calendar import timegm
 from distutils.version import StrictVersion
 import docker
 import json
@@ -68,8 +69,7 @@ def emit(container, dimensions, point_type, value, t=None,
         val.type_instance = type_instance
 
     if t:
-        val.time = time.mktime(dateutil.parser.parse(t, ignoretz=True)
-                               .timetuple())
+        val.time = timegm(dateutil.parser.parse(t).utctimetuple())
     else:
         val.time = time.time()
 
