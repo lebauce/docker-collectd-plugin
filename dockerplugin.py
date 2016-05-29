@@ -378,8 +378,10 @@ class DockerPlugin:
                           if c['Status'].startswith('Up')]
         except Exception as e:
             containers = []
-            collectd.info("[dockerplugin]: Failed to retrieve containers from \
-Docker API: %s" % e)
+            collectd.info(('Failed to retrieve containers info from {url}: '
+                           '{error}')
+                          .format(url=self.docker_url,
+                                  error=e))
 
         # Terminate stats gathering threads for containers that are not running
         # anymore.
