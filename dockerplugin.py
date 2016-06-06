@@ -334,6 +334,18 @@ class DockerPlugin:
                 except:
                     pass
 
+                # If the container is a chronos app then set the name
+                # to be based off the app id.
+                try:
+                    cenv = cdata['Config']['Env']
+                    appid = [x.split('=')[-1] for x in cenv
+                            if x.startswith('CHRONOS_JOB_NAME=')][0]
+
+                    if appid is not None:
+                        container['Name'] = 'chronos.' + appid
+                except:
+                    pass
+
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
                     self.stats[container['Id']] = ContainerStats(container,
