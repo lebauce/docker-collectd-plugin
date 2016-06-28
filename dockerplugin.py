@@ -155,7 +155,7 @@ class MemoryStats(Stats):
                   mem_stats['usage']]
         cls.emit(container, 'memory.usage', values, t=t)
 
-        for key, value in mem_stats['stats'].items():
+        for key, value in mem_stats.get('stats', {}).items():
             cls.emit(container, 'memory.stats', [value],
                      type_instance=key, t=t)
 
