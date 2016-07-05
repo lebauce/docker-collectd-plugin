@@ -29,8 +29,8 @@ from distutils.version import StrictVersion
 import docker
 import json
 import jsonpath_rw
+import logging
 import os
-import traceback
 import threading
 import time
 import sys
@@ -52,9 +52,38 @@ def _d(d):
     return ','.join(['='.join(p) for p in d.items()])
 
 
+def str_to_bool(value):
+    """Python 2.x does not have a casting mechanism for booleans.  The built in
+    bool() will return true for any string with a length greater than 0.  It
+    does not cast a string with the text "true" or "false" to the
+    corresponding bool value.  This method is a casting function.  It is
+    insensetive to case and leading/trailing spaces.  An Exception is raised
+    if a cast can not be made.
+    """
+    value = str(value).strip().lower()
+    if value == 'true':
+        return True
+    elif value == 'false':
+        return False
+    else:
+        raise ValueError('Unable to cast value (%s) to boolean' % value)
+
+
 def emit(container, dimensions, point_type, value, t=None,
          type_instance=None):
     """Emit a collected datapoint."""
+    log.info(('Value parameters to be emitted:'
+              '\n container : {c}'
+              '\n dimensions : {d}'
+              '\n point_type : {pt}'
+              '\n value : {v}'
+              '\n type_instance : {ti} '
+              '\n time : {t}').format(c=_c(container),
+                                      d=dimensions,
+                                      pt=point_type,
+                                      v=value,
+                                      ti=type_instance,
+                                      t=time))
     val = collectd.Values()
     val.plugin = 'docker'
     val.plugin_instance = container['Name']
@@ -80,11 +109,13 @@ def emit(container, dimensions, point_type, value, t=None,
     val.meta = {'true': 'true'}
 
     val.values = value
+    log.info('Value to be emitted {0}'.format(val))
     val.dispatch()
 
 
 def read_blkio_stats(container, dimensions, stats, t):
     """Process block I/O stats for a container."""
+    log.info('Reading blkio stats: {0}'.format(stats))
     for key, values in stats.items():
         # Block IO stats are reported by block device (with major/minor
         # numbers). We need to group and report the stats of each block
@@ -108,13 +139,14 @@ def read_blkio_stats(container, dimensions, stats, t):
                 emit(container, dimensions, 'blkio.single', values,
                      type_instance=key, t=t)
             else:
-                collectd.warn(('Unexpected number of blkio stats for '
-                               'container {container}!')
-                              .format(container=_c(container)))
+                log.warning(('Unexpected number of blkio stats for '
+                             'container {0}!')
+                            .format(_c(container)))
 
 
 def read_cpu_stats(container, dimensions, stats, t):
     """Process CPU utilization stats for a container."""
+    log.info('Reading cpu stats: {0}'.format(stats))
     cpu_usage = stats['cpu_usage']
     percpu = cpu_usage['percpu_usage']
     for cpu, value in enumerate(percpu):
@@ -132,6 +164,7 @@ def read_cpu_stats(container, dimensions, stats, t):
 
 def read_network_stats(container, dimensions, stats, t):
     """Process network utilization stats for a container."""
+    log.info('Reading network stats: {0}'.format(stats))
     items = stats.items()
     items.sort()
     emit(container, dimensions, 'network.usage', [x[1] for x in items], t=t)
@@ -139,6 +172,7 @@ def read_network_stats(container, dimensions, stats, t):
 
 def read_memory_stats(container, dimensions, stats, t):
     """Process memory utilization stats for a container."""
+    log.info('Reading memory stats: {0}'.format(stats))
     values = [stats['limit'], stats['max_usage'], stats['usage']]
     emit(container, dimensions, 'memory.usage', values, t=t)
 
@@ -148,10 +182,8 @@ def read_memory_stats(container, dimensions, stats, t):
             emit(container, dimensions, 'memory.stats', [value],
                  type_instance=key, t=t)
     else:
-        collectd.info(
-            ('No detailed memory stats available from container '
-             '{container}.')
-            .format(container=_c(container)))
+        log.notice('No detailed memory stats available from container {0}.'
+                   .format(_c(container)))
 
 
 class DimensionsProvider:
@@ -171,7 +203,11 @@ class DimensionsProvider:
 
     def __init__(self, specs):
         self._specs = specs
-        self._validate()
+        try:
+            self._validate()
+        except Exception as e:
+            log.exception(e)
+            raise e
 
     def _validate(self):
         """Validate the configured dimensions extraction specs."""
@@ -253,9 +289,9 @@ class ContainerStats(threading.Thread):
         self.start()
 
     def run(self):
-        collectd.info('Starting stats gathering for {container} ({dims}).'
-                      .format(container=_c(self._container),
-                              dims=_d(self.dimensions)))
+        log.info('Starting stats gathering for {container} ({dims}).'
+                 .format(container=_c(self._container),
+                         dims=_d(self.dimensions)))
 
         failures = 0
         while not self.stop:
@@ -267,9 +303,8 @@ class ContainerStats(threading.Thread):
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
-                collectd.warning('Error reading stats from {container}: {msg}'
-                                 .format(container=_c(self._container), msg=e))
-
+                log.exception('Error reading stats from {container}: {msg}'
+                              .format(container=_c(self._container), msg=e))
                 # If we encounter a failure, wait a second before retrying and
                 # mark the failures. After three consecutive failures, we'll
                 # stop the thread. If the container is still there, we'll spin
@@ -284,8 +319,8 @@ class ContainerStats(threading.Thread):
                 # survive transient Docker daemon errors/unavailabilities.
                 self._feed = None
 
-        collectd.info('Stopped stats gathering for {container}.'
-                      .format(container=_c(self._container)))
+        log.info('Stopped stats gathering for {0}.'
+                 .format(_c(self._container)))
 
     @property
     def stats(self):
@@ -337,12 +372,19 @@ class DockerPlugin:
         specs = {}
 
         for node in conf.children:
-            if node.key == 'BaseURL':
-                self.docker_url = node.values[0]
-            elif node.key == 'Timeout':
-                self.timeout = int(node.values[0])
-            elif node.key == 'Dimension':
-                specs[node.values[0]] = node.values[1]
+            try:
+                if node.key == 'BaseURL':
+                    self.docker_url = node.values[0]
+                elif node.key == 'Timeout':
+                    self.timeout = int(node.values[0])
+                elif node.key == 'Dimension':
+                    specs[node.values[0]] = node.values[1]
+                elif node.key == 'Verbose':
+                    handle.verbose = str_to_bool(node.values[0])
+            except Exception as e:
+                log.error('Failed to load the configuration %s due to %s'
+                          % (node.key, e))
+                raise e
 
         self.dimensions = DimensionsProvider(specs)
 
@@ -359,33 +401,41 @@ class DockerPlugin:
                     StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
                 raise Exception
         except:
-            collectd.warning(('Docker daemon at {url} does not '
-                              'support container statistics!')
-                             .format(url=self.docker_url))
+            log.exception(('Docker daemon at {0} does not '
+                           'support container statistics!')
+                          .format(self.docker_url))
             return False
 
         collectd.register_read(self.read_callback)
-        collectd.info(('Collecting stats about Docker containers from {url} '
-                       '(API version {version}; timeout: {timeout}s).')
-                      .format(url=self.docker_url,
-                              version=version,
-                              timeout=self.timeout))
+        log.notice(('Collecting stats about Docker containers from {url} '
+                    '(API version {version}; timeout: {timeout}s).')
+                   .format(url=self.docker_url,
+                           version=version,
+                           timeout=self.timeout))
         return True
 
     def read_callback(self):
         try:
             containers = [c for c in self.client.containers()
                           if c['Status'].startswith('Up')]
+            # Log the list of containers retrieved
+            log.info('The following containers were fetched from {url}: '
+                     '{c}'.format(url=self.docker_url, c=containers))
         except Exception as e:
             containers = []
-            collectd.info(('Failed to retrieve containers info from {url}: '
-                           '{error}')
+            log.exception(('Failed to retrieve containers info from {url} '
+                           'This may indicate that the docker api is '
+                           'inaccessible or that there are no running '
+                           'containers. : {error}')
                           .format(url=self.docker_url,
                                   error=e))
 
         # Terminate stats gathering threads for containers that are not running
         # anymore.
         for cid in set(self.stats) - set(map(lambda c: c['Id'], containers)):
+            # Log each container that is stopped
+            log.info('Stopping stats gathering for {0}'
+                     .format(_c(self.stats[cid])))
             self.stats[cid].stop = True
             del self.stats[cid]
 
@@ -412,11 +462,96 @@ class DockerPlugin:
                     if value:
                         method(container, cstats.dimensions, value, read_at)
             except Exception, e:
-                collectd.warning(('Error getting stats for container '
-                                  '{container}: {msg}')
-                                 .format(container=_c(container), msg=e))
-                collectd.warning(traceback.format_exc())
+                log.exception(('Unable to retrieve stats for container '
+                               '{container}: {msg}')
+                              .format(container=_c(container), msg=e))
 
+
+class CollectdLogHandler(logging.Handler):
+    """Log handler to forward statements to collectd
+    A custom log handler that forwards log messages raised
+    at level debug, info, notice, warning, and error
+    to collectd's built in logging.  Suppresses extraneous
+    info and debug statements using a "verbose" boolean
+
+    Inherits from logging.Handler
+
+    Arguments
+        plugin -- name of the plugin (default 'unknown')
+        verbose -- enable/disable verbose messages (default False)
+    """
+    def __init__(self, plugin="unknown", verbose=False):
+        """Initializes CollectdLogHandler
+        Arguments
+            plugin -- string name of the plugin (default 'unknown')
+            verbose -- enable/disable verbose messages (default False)
+        """
+        self.verbose = verbose
+        self.plugin = plugin
+        logging.Handler.__init__(self, level=logging.NOTSET)
+
+    def emit(self, record):
+        """
+        Emits a log record to the appropraite collectd log function
+
+        Arguments
+        record -- str log record to be emitted
+        """
+        try:
+            if record.msg is not None:
+                if record.levelname == 'ERROR':
+                    collectd.error('%s : %s' % (self.plugin, record.msg))
+                elif record.levelname == 'WARNING':
+                    collectd.warning('%s : %s' % (self.plugin, record.msg))
+                elif record.levelname == 'NOTICE':
+                    collectd.notice('%s : %s' % (self.plugin, record.msg))
+                elif record.levelname == 'INFO' and self.verbose is True:
+                    collectd.info('%s : %s' % (self.plugin, record.msg))
+                elif record.levelname == 'DEBUG' and self.verbose is True:
+                    collectd.debug('%s : %s' % (self.plugin, record.msg))
+        except Exception as e:
+            collectd.warning(('{p} [ERROR]: Failed to write log statement due '
+                              'to: {e}').format(p=self.plugin,
+                                                e=e
+                                                ))
+
+
+class CollectdLogger(logging.Logger):
+    """Logs all collectd log levels via python's logging library
+    Custom python logger that forwards log statements at
+    level: debug, info, notice, warning, error
+
+    Inherits from logging.Logger
+
+    Arguments
+    name -- name of the logger
+    level -- log level to filter by
+    """
+    def __init__(self, name, level=logging.NOTSET):
+        """Initializes CollectdLogger
+
+        Arguments
+        name -- name of the logger
+        level -- log level to filter by
+        """
+        logging.Logger.__init__(self, name, level)
+        logging.addLevelName(25, 'NOTICE')
+
+    def notice(self, msg):
+        """Logs a 'NOTICE' level statement at level 25
+
+        Arguments
+        msg - log statement to be logged as 'NOTICE'
+        """
+        self.log(25, msg)
+
+
+# Set up logging
+logging.setLoggerClass(CollectdLogger)
+log = logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+handle = CollectdLogHandler('docker')
+log.addHandler(handle)
 
 # Command-line execution
 if __name__ == '__main__':
@@ -440,11 +575,20 @@ if __name__ == '__main__':
         def register_read(self, callback):
             pass
 
+        def error(self, msg):
+            print 'ERROR: ', msg
+
         def warning(self, msg):
             print 'WARNING:', msg
 
+        def notice(self, msg):
+            print 'NOTICE: ', msg
+
         def info(self, msg):
             print 'INFO:', msg
+
+        def debug(self, msg):
+            print 'DEBUG: ', msg
 
     collectd = ExecCollectd()
     plugin = DockerPlugin()
