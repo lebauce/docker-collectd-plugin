@@ -303,8 +303,6 @@ class ContainerStats(threading.Thread):
                 # Reset failure count on successfull read from the stats API.
                 failures = 0
             except Exception, e:
-                log.exception('Error reading stats from {container}: {msg}'
-                              .format(container=_c(self._container), msg=e))
                 # If we encounter a failure, wait a second before retrying and
                 # mark the failures. After three consecutive failures, we'll
                 # stop the thread. If the container is still there, we'll spin
@@ -313,6 +311,10 @@ class ContainerStats(threading.Thread):
                 time.sleep(1)
                 failures += 1
                 if failures > 3:
+                    log.exception(('Unable to read stats from {container}: '
+                                  '{msg}')
+                                  .format(container=_c(self._container),
+                                          msg=e))
                     self.stop = True
 
                 # Marking the feed as dead so we'll attempt to recreate it and
@@ -434,9 +436,9 @@ class DockerPlugin:
         # anymore.
         for cid in set(self.stats) - set(map(lambda c: c['Id'], containers)):
             # Log each container that is stopped
-            log.info('Stopping stats gathering for {0}'
-                     .format(_c(self.stats[cid])))
             self.stats[cid].stop = True
+            log.info('Stopping stats gathering for {0}'
+                     .format(_c(self.stats[cid]._container)))
             del self.stats[cid]
 
         for container in containers:
