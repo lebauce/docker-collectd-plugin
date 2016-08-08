@@ -121,22 +121,34 @@ def read_blkio_stats(container, dimensions, stats, t):
         # numbers). We need to group and report the stats of each block
         # device independently.
         blkio_stats = {}
+        blkio_major_stats = {}
+        blkio_minor_stats = {}
+
         for value in values:
+
             k = '{key}-{major}-{minor}'.format(key=key,
                                                major=value['major'],
                                                minor=value['minor'])
+
             if k not in blkio_stats:
                 blkio_stats[k] = []
             blkio_stats[k].append(value['value'])
+            blkio_major_stats[k] = value['major']
+            blkio_minor_stats[k] = value['minor']
 
         for type_instance, values in blkio_stats.items():
+            # add block device major and minor as dimensions
+            blkioDims = dimensions.copy()
+            blkioDims['device_major'] = str(blkio_major_stats[type_instance])
+            blkioDims['device_minor'] = str(blkio_minor_stats[type_instance])
+
             if len(values) == 5:
-                emit(container, dimensions, 'blkio', values,
-                     type_instance=type_instance, t=t)
+                emit(container, blkioDims, 'blkio', values,
+                     type_instance=key, t=t)
             elif len(values) == 1:
                 # For some reason, some fields contains only one value and
                 # the 'op' field is empty. Need to investigate this
-                emit(container, dimensions, 'blkio.single', values,
+                emit(container, blkioDims, 'blkio.single', values,
                      type_instance=key, t=t)
             else:
                 log.warning(('Unexpected number of blkio stats for '
@@ -150,8 +162,10 @@ def read_cpu_stats(container, dimensions, stats, t):
     cpu_usage = stats['cpu_usage']
     percpu = cpu_usage['percpu_usage']
     for cpu, value in enumerate(percpu):
-        emit(container, dimensions, 'cpu.percpu.usage', [value],
-             type_instance='cpu%d' % (cpu,), t=t)
+        percpuDims = dimensions.copy()
+        percpuDims['core'] = ('cpu%d' % (cpu))
+        emit(container, percpuDims, 'cpu.percpu.usage', [value],
+             type_instance='', t=t)
 
     items = sorted(stats['throttling_data'].items())
     emit(container, dimensions, 'cpu.throttling_data',

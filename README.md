@@ -179,8 +179,7 @@ everything else from the plugin:
 </Chain>
 ```
 
-For convenience, you'll find those configuration blocks in the provided
-sample configuration file [`dockerplugin.conf`](dockerplugin.conf).
+For convenience, you'll find those configuration blocks in the example configuration file [`10-docker.conf`](https://github.com/signalfx/integrations/blob/master/collectd-docker/10-docker.conf).
 
 ## Requirements
 
