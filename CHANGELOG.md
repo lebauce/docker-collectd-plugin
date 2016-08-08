@@ -31,47 +31,25 @@ timeseries expression as the signal.
 
 ##### Block I/0: blkio.io_service_bytes_recursive.*
 
-In this update, the block device identifier has been removed from metric names
+In this update, the block device identifier has been moved from metric names
 to the dimensions called "device_major" and "device_minor". 
 
-**Before**: 
+For example: 
 
-Ex. (Where block device is "252-0")
+|        | Metric name | device_major | device_minor |
+|--------|-------------|--------------|--------------|
+| Before | `blkio.io_service_bytes_recursive-252-0.read` | _n/a_ | _n/a_ |
+| After  | `blkio.io_service_bytes_recursive.read` | `252` | `0` |
 
-``` 
-blkio.io_service_bytes_recursive-252-0.read 
-```
-
-**After**:
-
-Ex. (Where block device is "252-0") 
-
-```Bash
-blkio.io_service_bytes_recursive.read 
-# This metric now has the dimension  
-# named "device_major" set to "252", and  
-# "device_minor" set to "0".  
-```
 
 ##### CPU statistics per core: cpu.percpu.usage
 
-In this update, the CPU core identifier has been removed from metric names to
+In this update, the CPU core identifier has been moved from metric names to
 the dimension called "core". 
 
-**Before**:
+For example: 
 
-Ex. (Where CPU core is 0)
-
-``` 
-cpu.percpu.usage.cpu0 
-```
-
-**After**: 
-
-Ex. (Where CPU core is 0) 
-
-```Bash 
-cpu.percpu.usage 
-# This metric now has the dimension  
-# named "core" set to "cpu0". 
-```
+|        | Metric name | core |
+|--------|-------------|--------------|
+| Before | `cpu.percpu.usage.cpu0` | _n/a_ |
+| After  | `cpu.percpu.usage` | `cpu0` |
