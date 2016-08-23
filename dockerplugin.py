@@ -76,8 +76,8 @@ class Stats:
 
         cache_identifier = val.plugin_instance + val.type + val.type_instance
         if not CACHE.get(cache_identifier) == val.time:
-           CACHE[cache_identifier] = val.time
-           val.dispatch()
+             CACHE[cache_identifier] = val.time
+             val.dispatch()
 
     @classmethod
     def read(cls, container, stats, t):
