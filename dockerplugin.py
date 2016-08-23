@@ -23,17 +23,20 @@
 #
 # Requirements: docker-py
 
-import dateutil.parser
-from distutils.version import StrictVersion
-import docker
+import datetime
 import os
+import re
+import sys
 import threading
 import time
-import sys
-import re
+from distutils.version import StrictVersion
+
+import dateutil.parser
+import docker
 
 STREAM_DOCKER_PY_VERSION = (1, 6, 0)
 
+CACHE = {}
 
 def _c(c):
     """A helper method for representing a container in messages. If the given
@@ -58,7 +61,8 @@ class Stats:
             val.type_instance = type_instance
 
         if t:
-            val.time = time.mktime(dateutil.parser.parse(t).timetuple())
+            d = dateutil.parser.parse(t)
+            val.time = (d - datetime.datetime(1970, 1, 1, tzinfo=d.tzinfo)).total_seconds()
         else:
             val.time = time.time()
 
@@ -69,7 +73,11 @@ class Stats:
         val.meta = {'true': 'true'}
 
         val.values = value
-        val.dispatch()
+
+        cache_identifier = val.plugin_instance + val.type + val.type_instance
+        if not CACHE.get(cache_identifier) == val.time:
+           CACHE[cache_identifier] = val.time
+           val.dispatch()
 
     @classmethod
     def read(cls, container, stats, t):
@@ -156,8 +164,7 @@ class MemoryStats(Stats):
         cls.emit(container, 'memory.usage', values, t=t)
 
         for key, value in (mem_stats.get('stats') or {}).items():
-            cls.emit(container, 'memory.stats', [value],
-                     type_instance=key, t=t)
+            cls.emit(container, 'memory.stats', [value], type_instance=key, t=t)
 
         mem_percent = 100.0 * mem_stats['usage'] / mem_stats['limit']
         cls.emit(container, 'memory.percent', ["%.2f" % mem_percent], t=t)
@@ -240,7 +247,7 @@ class ContainerStats(threading.Thread):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
         while not self._stats:
-            pass
+            time.sleep(0.01)
         return self._stats
 
 
@@ -351,7 +358,8 @@ if __name__ == '__main__':
             if getattr(self, 'type_instance', None):
                 identifier += '-' + self.type_instance
             print 'PUTVAL', identifier, \
-                  ':'.join(map(str, [int(self.time)] + self.values))
+                ':'.join(map(str, [int(self.time)] + self.values))
+
 
     class ExecCollectd:
         def Values(self):
@@ -366,6 +374,7 @@ if __name__ == '__main__':
         def register_read(self, docker_plugin):
             pass
 
+
     collectd = ExecCollectd()
     plugin = DockerPlugin()
     if len(sys.argv) > 1:
@@ -377,6 +386,7 @@ if __name__ == '__main__':
 # Normal plugin execution via CollectD
 else:
     import collectd
+
     plugin = DockerPlugin()
     collectd.register_config(plugin.configure_callback)
     collectd.register_init(plugin.init_callback)
