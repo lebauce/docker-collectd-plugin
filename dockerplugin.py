@@ -35,6 +35,7 @@ import threading
 import time
 import sys
 
+COLLECTION_INTERVAL = 10
 
 def _c(c):
     """A helper method for representing a container in messages. If the given
@@ -387,6 +388,8 @@ class DockerPlugin:
     def configure_callback(self, conf):
         specs = {}
 
+        global COLLECTION_INTERVAL
+
         for node in conf.children:
             try:
                 if node.key == 'BaseURL':
@@ -397,6 +400,8 @@ class DockerPlugin:
                     specs[node.values[0]] = node.values[1]
                 elif node.key == 'Verbose':
                     handle.verbose = str_to_bool(node.values[0])
+		elif node.key == 'Interval':
+		    COLLECTION_INTERVAL = int(node.values[0])
             except Exception as e:
                 log.error('Failed to load the configuration %s due to %s'
                           % (node.key, e))
@@ -422,7 +427,7 @@ class DockerPlugin:
                           .format(self.docker_url))
             return False
 
-        collectd.register_read(self.read_callback)
+        collectd.register_read(self.read_callback, interval=COLLECTION_INTERVAL)
         log.notice(('Collecting stats about Docker containers from {url} '
                     '(API version {version}; timeout: {timeout}s).')
                    .format(url=self.docker_url,
