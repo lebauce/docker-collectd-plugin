@@ -35,7 +35,7 @@ of the container is used for the `plugin_instance` dimension.
 1. Checkout this repository somewhere on your system accessible by
    collectd; for example as
    `/usr/share/collectd/docker-collectd-plugin`.
-1. Install the Python requirements with `pip install -r
+1. Install the Python requirements with `sudo pip install -r
    requirements.txt`.
 1. Configure the plugin (see below).
 1. Restart collectd.
