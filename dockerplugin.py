@@ -27,7 +27,6 @@ import dateutil.parser
 from calendar import timegm
 from distutils.version import StrictVersion
 import docker
-import json
 import jsonpath_rw
 import logging
 import os
@@ -59,7 +58,7 @@ def str_to_bool(value):
     bool() will return true for any string with a length greater than 0.  It
     does not cast a string with the text "true" or "false" to the
     corresponding bool value.  This method is a casting function.  It is
-    insensetive to case and leading/trailing spaces.  An Exception is raised
+    insensitive to case and leading/trailing spaces.  An Exception is raised
     if a cast can not be made.
     """
     value = str(value).strip().lower()
@@ -117,31 +116,33 @@ def emit(container, dimensions, point_type, value, t=None,
 
 def read_blkio_stats(container, dimensions, stats, t):
     """Process block I/O stats for a container."""
-    log.info('Reading blkio stats: {0}'.format(stats))
-    for key, values in stats.items():
+    blkio_stats = stats['blkio_stats']
+    log.info('Reading blkio stats: {0}'.format(blkio_stats))
+
+    for key, values in blkio_stats.items():
         # Block IO stats are reported by block device (with major/minor
         # numbers). We need to group and report the stats of each block
         # device independently.
-        blkio_stats = {}
-        blkio_major_stats = {}
-        blkio_minor_stats = {}
+        device_stats = {}
+        device_major_stats = {}
+        device_minor_stats = {}
 
         for value in values:
             k = '{key}-{major}-{minor}'.format(key=key,
                                                major=value['major'],
                                                minor=value['minor'])
 
-            if k not in blkio_stats:
-                blkio_stats[k] = []
-            blkio_stats[k].append(value['value'])
-            blkio_major_stats[k] = value['major']
-            blkio_minor_stats[k] = value['minor']
+            if k not in device_stats:
+                device_stats[k] = []
+            device_stats[k].append(value['value'])
+            device_major_stats[k] = value['major']
+            device_minor_stats[k] = value['minor']
 
-        for type_instance, values in blkio_stats.items():
+        for type_instance, values in device_stats.items():
             # add block device major and minor as dimensions
             blkio_dims = dimensions.copy()
-            blkio_dims['device_major'] = str(blkio_major_stats[type_instance])
-            blkio_dims['device_minor'] = str(blkio_minor_stats[type_instance])
+            blkio_dims['device_major'] = str(device_major_stats[type_instance])
+            blkio_dims['device_minor'] = str(device_minor_stats[type_instance])
 
             if len(values) == 5:
                 emit(container, blkio_dims, 'blkio', values,
@@ -159,39 +160,61 @@ def read_blkio_stats(container, dimensions, stats, t):
 
 def read_cpu_stats(container, dimensions, stats, t):
     """Process CPU utilization stats for a container."""
-    log.info('Reading cpu stats: {0}'.format(stats))
-    cpu_usage = stats['cpu_usage']
+    cpu_stats = stats['cpu_stats']
+    log.info('Reading cpu stats: {0}'.format(cpu_stats))
+
+    cpu_usage = cpu_stats['cpu_usage']
     percpu = cpu_usage['percpu_usage']
+
     for cpu, value in enumerate(percpu):
         percpu_dims = dimensions.copy()
-        percpu_dims['core'] = ('cpu%d' % (cpu))
+        percpu_dims['core'] = ('cpu%d' % cpu)
         emit(container, percpu_dims, 'cpu.percpu.usage', [value],
              type_instance='', t=t)
 
-    items = sorted(stats['throttling_data'].items())
+    items = sorted(cpu_stats['throttling_data'].items())
     emit(container, dimensions, 'cpu.throttling_data',
          [x[1] for x in items], t=t)
 
+    system_cpu_usage = cpu_stats['system_cpu_usage']
     values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
-              cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
+              cpu_usage['usage_in_usermode'], system_cpu_usage]
     emit(container, dimensions, 'cpu.usage', values, t=t)
+
+    # CPU Percentage based on calculateCPUPercent Docker method
+    # https://github.com/docker/docker/blob/master/api/client/stats.go
+    cpu_percent = 0.0
+    if 'precpu_stats' in stats:
+        precpu_stats = stats['precpu_stats']
+        precpu_usage = precpu_stats['cpu_usage']
+        cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
+        system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
+        if system_delta > 0 and cpu_delta > 0:
+            cpu_percent = 100.0 * cpu_delta / system_delta * len(percpu)
+    emit(container, dimensions, "cpu.percent", [cpu_percent], t=t)
 
 
 def read_network_stats(container, dimensions, stats, t):
     """Process network utilization stats for a container."""
-    log.info('Reading network stats: {0}'.format(stats))
-    items = stats.items()
-    items.sort()
+    net_stats = stats['network']
+    log.info('Reading network stats: {0}'.format(net_stats))
+
+    items = sorted(net_stats.items())
     emit(container, dimensions, 'network.usage', [x[1] for x in items], t=t)
 
 
 def read_memory_stats(container, dimensions, stats, t):
     """Process memory utilization stats for a container."""
-    log.info('Reading memory stats: {0}'.format(stats))
-    values = [stats['limit'], stats['max_usage'], stats['usage']]
+    mem_stats = stats['memory_stats']
+    log.info('Reading memory stats: {0}'.format(mem_stats))
+
+    values = [mem_stats['limit'], mem_stats['max_usage'], mem_stats['usage']]
     emit(container, dimensions, 'memory.usage', values, t=t)
 
-    detailed = stats.get('stats')
+    mem_percent = 100.0 * mem_stats['usage'] / mem_stats['limit']
+    emit(container, dimensions, 'memory.percent', [mem_percent], t=t)
+
+    detailed = mem_stats.get('stats')
     if detailed:
         for key, value in detailed.items():
             emit(container, dimensions, 'memory.stats', [value],
@@ -307,12 +330,13 @@ class ContainerStats(threading.Thread):
         log.info('Starting stats gathering for {container} ({dims}).'
                  .format(container=_c(self._container),
                          dims=_d(self.dimensions)))
-
         failures = 0
+
         while not self.stop:
             try:
                 if not self._feed:
-                    self._feed = self._client.stats(self._container)
+                    self._feed = self._client.stats(self._container,
+                                                    decode=True)
                 self._stats = self._feed.next()
 
                 # Reset failure count on successful read from the stats API.
@@ -344,7 +368,7 @@ class ContainerStats(threading.Thread):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
         if self._stats:
-            return json.loads(self._stats)
+            return self._stats
         return None
 
 
@@ -361,10 +385,8 @@ class DockerPlugin:
     MIN_DOCKER_API_VERSION = '1.17'
 
     # TODO: add support for 'networks' from API >= 1.20 to get by-iface stats.
-    METHODS = {'network': read_network_stats,
-               'blkio_stats': read_blkio_stats,
-               'cpu_stats': read_cpu_stats,
-               'memory_stats': read_memory_stats}
+    METHODS = [read_network_stats, read_blkio_stats, read_cpu_stats,
+               read_memory_stats]
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
@@ -486,10 +508,8 @@ class DockerPlugin:
                     continue
 
                 # Process stats through each reader.
-                for key, method in self.METHODS.items():
-                    value = stats.get(key)
-                    if value:
-                        method(container, cstats.dimensions, value, read_at)
+                for method in self.METHODS:
+                    method(container, cstats.dimensions, stats, read_at)
             except Exception, e:
                 log.exception(('Unable to retrieve stats for container '
                                '{container}: {msg}')
@@ -621,6 +641,8 @@ if __name__ == '__main__':
         def debug(self, msg):
             print 'DEBUG: ', msg
 
+        def register_read(self, docker_plugin):
+            pass
 
     collectd = ExecCollectd()
     plugin = DockerPlugin()

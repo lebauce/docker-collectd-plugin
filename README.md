@@ -151,13 +151,13 @@ everything else from the plugin:
 <Chain "FilterOutDetailedDockerStats">
   <Rule "CpuUsage">
     <Match "regex">
-      Type "^cpu.usage$"
+      Type "^cpu.percent$"
     </Match>
     Target "return"
   </Rule>
   <Rule "MemoryUsage">
     <Match "regex">
-      Type "^memory.usage$"
+      Type "^memory.percent$"
     </Match>
     Target "return"
   </Rule>
