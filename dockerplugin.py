@@ -399,11 +399,19 @@ class DockerPlugin:
         """Extract the true container name from the list of container names
         sent back by the Docker API. The list of container names contains the
         names of linked containers too ('/other/alias' for example), but we're
-        only interested in the true container's name, '/foo'."""
+        only interested in the true container's name, '/foo'. Also handle
+        containers names when running on Docker Swarm: drop the unnecessary
+        service ID, but keep instance number."""
         for name in names:
-            split = name.split('/')
-            if len(split) == 2:
-                return split[1]
+            slash_arr = name.split('/')
+            if len(slash_arr) == 2:
+                new_name = slash_arr[1]
+
+                dot_arr = new_name.split('.')
+                if len(dot_arr) > 2 and len(dot_arr[-1]) == 25:
+                    new_name = '.'.join(dot_arr[0:-1])
+
+                return new_name
         raise Exception('Cannot find valid container name in {names}'
                         .format(names=names))
 
