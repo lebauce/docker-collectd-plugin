@@ -23,16 +23,18 @@
 #
 # Requirements: docker-py
 
-import dateutil.parser
-from calendar import timegm
-from distutils.version import StrictVersion
-import docker
-import jsonpath_rw
 import logging
 import os
+import sys
 import threading
 import time
-import sys
+from calendar import timegm
+from distutils.version import StrictVersion
+
+import dateutil.parser
+import docker
+import jsonpath_rw
+
 
 COLLECTION_INTERVAL = 10
 
@@ -88,6 +90,7 @@ def emit(container, dimensions, point_type, value, t=None,
     val = collectd.Values()
     val.plugin = 'docker'
     val.plugin_instance = container['Name']
+    val.interval = COLLECTION_INTERVAL
 
     # Add additional extracted dimensions through plugin_instance.
     if dimensions:
@@ -95,6 +98,7 @@ def emit(container, dimensions, point_type, value, t=None,
 
     if point_type:
         val.type = point_type
+
     if type_instance:
         val.type_instance = type_instance
 
@@ -110,7 +114,6 @@ def emit(container, dimensions, point_type, value, t=None,
     val.meta = {'true': 'true'}
 
     val.values = value
-    log.info('Value to be emitted {0}'.format(val))
     val.dispatch()
 
 
@@ -455,14 +458,11 @@ class DockerPlugin:
             return False
 
         # Check API version for stats endpoint support.
-        try:
-            if StrictVersion(version) < \
-                    StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
-                raise Exception
-        except:
-            log.exception(('Docker daemon at {url} does not '
-                           'support container statistics!')
-                          .format(url=self.docker_url))
+        if StrictVersion(version) < \
+                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
+            log.error(('Docker daemon at {url} does not '
+                       'support container statistics!')
+                      .format(url=self.docker_url))
             return False
 
         collectd.register_read(self.read_callback, interval=COLLECTION_INTERVAL)
@@ -631,7 +631,7 @@ if __name__ == '__main__':
         def Values(self):
             return ExecCollectdValues()
 
-        def register_read(self, callback):
+        def register_read(self, callback, interval):
             pass
 
         def error(self, msg):
@@ -649,8 +649,6 @@ if __name__ == '__main__':
         def debug(self, msg):
             print 'DEBUG: ', msg
 
-        def register_read(self, docker_plugin):
-            pass
 
     collectd = ExecCollectd()
     plugin = DockerPlugin()
