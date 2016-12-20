@@ -23,6 +23,9 @@
 #
 # Requirements: docker-py
 
+import dateutil.parser
+import docker
+import jsonpath_rw
 import logging
 import os
 import sys
@@ -30,11 +33,6 @@ import threading
 import time
 from calendar import timegm
 from distutils.version import StrictVersion
-
-import dateutil.parser
-import docker
-import jsonpath_rw
-
 
 COLLECTION_INTERVAL = 10
 
