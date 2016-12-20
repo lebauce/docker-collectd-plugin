@@ -24,18 +24,18 @@
 # Requirements: docker-py
 
 import dateutil.parser
-from calendar import timegm
-from distutils.version import StrictVersion
 import docker
-import json
 import jsonpath_rw
 import logging
 import os
+import sys
 import threading
 import time
-import sys
+from calendar import timegm
+from distutils.version import StrictVersion
 
 COLLECTION_INTERVAL = 10
+
 
 def _c(c):
     """A helper method for representing a container in messages. If the given
@@ -58,7 +58,7 @@ def str_to_bool(value):
     bool() will return true for any string with a length greater than 0.  It
     does not cast a string with the text "true" or "false" to the
     corresponding bool value.  This method is a casting function.  It is
-    insensetive to case and leading/trailing spaces.  An Exception is raised
+    insensitive to case and leading/trailing spaces.  An Exception is raised
     if a cast can not be made.
     """
     value = str(value).strip().lower()
@@ -88,6 +88,7 @@ def emit(container, dimensions, point_type, value, t=None,
     val = collectd.Values()
     val.plugin = 'docker'
     val.plugin_instance = container['Name']
+    val.interval = COLLECTION_INTERVAL
 
     # Add additional extracted dimensions through plugin_instance.
     if dimensions:
@@ -95,6 +96,7 @@ def emit(container, dimensions, point_type, value, t=None,
 
     if point_type:
         val.type = point_type
+
     if type_instance:
         val.type_instance = type_instance
 
@@ -110,46 +112,46 @@ def emit(container, dimensions, point_type, value, t=None,
     val.meta = {'true': 'true'}
 
     val.values = value
-    log.info('Value to be emitted {0}'.format(val))
     val.dispatch()
 
 
 def read_blkio_stats(container, dimensions, stats, t):
     """Process block I/O stats for a container."""
-    log.info('Reading blkio stats: {0}'.format(stats))
-    for key, values in stats.items():
+    blkio_stats = stats['blkio_stats']
+    log.info('Reading blkio stats: {0}'.format(blkio_stats))
+
+    for key, values in blkio_stats.items():
         # Block IO stats are reported by block device (with major/minor
         # numbers). We need to group and report the stats of each block
         # device independently.
-        blkio_stats = {}
-        blkio_major_stats = {}
-        blkio_minor_stats = {}
+        device_stats = {}
+        device_major_stats = {}
+        device_minor_stats = {}
 
         for value in values:
-
             k = '{key}-{major}-{minor}'.format(key=key,
                                                major=value['major'],
                                                minor=value['minor'])
 
-            if k not in blkio_stats:
-                blkio_stats[k] = []
-            blkio_stats[k].append(value['value'])
-            blkio_major_stats[k] = value['major']
-            blkio_minor_stats[k] = value['minor']
+            if k not in device_stats:
+                device_stats[k] = []
+            device_stats[k].append(value['value'])
+            device_major_stats[k] = value['major']
+            device_minor_stats[k] = value['minor']
 
-        for type_instance, values in blkio_stats.items():
+        for type_instance, values in device_stats.items():
             # add block device major and minor as dimensions
-            blkioDims = dimensions.copy()
-            blkioDims['device_major'] = str(blkio_major_stats[type_instance])
-            blkioDims['device_minor'] = str(blkio_minor_stats[type_instance])
+            blkio_dims = dimensions.copy()
+            blkio_dims['device_major'] = str(device_major_stats[type_instance])
+            blkio_dims['device_minor'] = str(device_minor_stats[type_instance])
 
             if len(values) == 5:
-                emit(container, blkioDims, 'blkio', values,
+                emit(container, blkio_dims, 'blkio', values,
                      type_instance=key, t=t)
             elif len(values) == 1:
                 # For some reason, some fields contains only one value and
                 # the 'op' field is empty. Need to investigate this
-                emit(container, blkioDims, 'blkio.single', values,
+                emit(container, blkio_dims, 'blkio.single', values,
                      type_instance=key, t=t)
             else:
                 log.warning(('Unexpected number of blkio stats for '
@@ -159,39 +161,61 @@ def read_blkio_stats(container, dimensions, stats, t):
 
 def read_cpu_stats(container, dimensions, stats, t):
     """Process CPU utilization stats for a container."""
-    log.info('Reading cpu stats: {0}'.format(stats))
-    cpu_usage = stats['cpu_usage']
+    cpu_stats = stats['cpu_stats']
+    log.info('Reading cpu stats: {0}'.format(cpu_stats))
+
+    cpu_usage = cpu_stats['cpu_usage']
     percpu = cpu_usage['percpu_usage']
+
     for cpu, value in enumerate(percpu):
-        percpuDims = dimensions.copy()
-        percpuDims['core'] = ('cpu%d' % (cpu))
-        emit(container, percpuDims, 'cpu.percpu.usage', [value],
+        percpu_dims = dimensions.copy()
+        percpu_dims['core'] = ('cpu%d' % cpu)
+        emit(container, percpu_dims, 'cpu.percpu.usage', [value],
              type_instance='', t=t)
 
-    items = sorted(stats['throttling_data'].items())
+    items = sorted(cpu_stats['throttling_data'].items())
     emit(container, dimensions, 'cpu.throttling_data',
          [x[1] for x in items], t=t)
 
+    system_cpu_usage = cpu_stats['system_cpu_usage']
     values = [cpu_usage['total_usage'], cpu_usage['usage_in_kernelmode'],
-              cpu_usage['usage_in_usermode'], stats['system_cpu_usage']]
+              cpu_usage['usage_in_usermode'], system_cpu_usage]
     emit(container, dimensions, 'cpu.usage', values, t=t)
+
+    # CPU Percentage based on calculateCPUPercent Docker method
+    # https://github.com/docker/docker/blob/master/api/client/stats.go
+    cpu_percent = 0.0
+    if 'precpu_stats' in stats:
+        precpu_stats = stats['precpu_stats']
+        precpu_usage = precpu_stats['cpu_usage']
+        cpu_delta = cpu_usage['total_usage'] - precpu_usage['total_usage']
+        system_delta = system_cpu_usage - precpu_stats['system_cpu_usage']
+        if system_delta > 0 and cpu_delta > 0:
+            cpu_percent = 100.0 * cpu_delta / system_delta * len(percpu)
+    emit(container, dimensions, "cpu.percent", [cpu_percent], t=t)
 
 
 def read_network_stats(container, dimensions, stats, t):
     """Process network utilization stats for a container."""
-    log.info('Reading network stats: {0}'.format(stats))
-    items = stats.items()
-    items.sort()
+    net_stats = stats['network']
+    log.info('Reading network stats: {0}'.format(net_stats))
+
+    items = sorted(net_stats.items())
     emit(container, dimensions, 'network.usage', [x[1] for x in items], t=t)
 
 
 def read_memory_stats(container, dimensions, stats, t):
     """Process memory utilization stats for a container."""
-    log.info('Reading memory stats: {0}'.format(stats))
-    values = [stats['limit'], stats['max_usage'], stats['usage']]
+    mem_stats = stats['memory_stats']
+    log.info('Reading memory stats: {0}'.format(mem_stats))
+
+    values = [mem_stats['limit'], mem_stats['max_usage'], mem_stats['usage']]
     emit(container, dimensions, 'memory.usage', values, t=t)
 
-    detailed = stats.get('stats')
+    mem_percent = 100.0 * mem_stats['usage'] / mem_stats['limit']
+    emit(container, dimensions, 'memory.percent', [mem_percent], t=t)
+
+    detailed = mem_stats.get('stats')
     if detailed:
         for key, value in detailed.items():
             emit(container, dimensions, 'memory.stats', [value],
@@ -235,7 +259,7 @@ class DimensionsProvider:
                                 .format(dim=name, spec=spec))
 
             if provider not in DimensionsProvider.SUPPORTED_PROVIDERS:
-                raise Exception('Unknown dimnension provider {provider} '
+                raise Exception('Unknown dimension provider {provider} '
                                 'for dimension {dim}!'
                                 .format(provider=provider, dim=name))
 
@@ -307,15 +331,16 @@ class ContainerStats(threading.Thread):
         log.info('Starting stats gathering for {container} ({dims}).'
                  .format(container=_c(self._container),
                          dims=_d(self.dimensions)))
-
         failures = 0
+
         while not self.stop:
             try:
                 if not self._feed:
-                    self._feed = self._client.stats(self._container)
+                    self._feed = self._client.stats(self._container,
+                                                    decode=True)
                 self._stats = self._feed.next()
 
-                # Reset failure count on successfull read from the stats API.
+                # Reset failure count on successful read from the stats API.
                 failures = 0
             except Exception, e:
                 # If we encounter a failure, wait a second before retrying and
@@ -327,7 +352,7 @@ class ContainerStats(threading.Thread):
                 failures += 1
                 if failures > 3:
                     log.exception(('Unable to read stats from {container}: '
-                                  '{msg}')
+                                   '{msg}')
                                   .format(container=_c(self._container),
                                           msg=e))
                     self.stop = True
@@ -344,7 +369,7 @@ class ContainerStats(threading.Thread):
         """Wait, if needed, for stats to be available and return the most
         recently read stats data, parsed as JSON, for the container."""
         if self._stats:
-            return json.loads(self._stats)
+            return self._stats
         return None
 
 
@@ -361,10 +386,8 @@ class DockerPlugin:
     MIN_DOCKER_API_VERSION = '1.17'
 
     # TODO: add support for 'networks' from API >= 1.20 to get by-iface stats.
-    METHODS = {'network': read_network_stats,
-               'blkio_stats': read_blkio_stats,
-               'cpu_stats': read_cpu_stats,
-               'memory_stats': read_memory_stats}
+    METHODS = [read_network_stats, read_blkio_stats, read_cpu_stats,
+               read_memory_stats]
 
     def __init__(self, docker_url=None):
         self.docker_url = docker_url or DockerPlugin.DEFAULT_BASE_URL
@@ -377,11 +400,19 @@ class DockerPlugin:
         """Extract the true container name from the list of container names
         sent back by the Docker API. The list of container names contains the
         names of linked containers too ('/other/alias' for example), but we're
-        only interested in the true container's name, '/foo'."""
+        only interested in the true container's name, '/foo'. Also handle
+        containers names when running on Docker Swarm: drop the unnecessary
+        service ID, but keep instance number."""
         for name in names:
-            split = name.split('/')
-            if len(split) == 2:
-                return split[1]
+            slash_arr = name.split('/')
+            if len(slash_arr) == 2:
+                new_name = slash_arr[1]
+
+                dot_arr = new_name.split('.')
+                if len(dot_arr) > 2 and len(dot_arr[-1]) == 25:
+                    new_name = '.'.join(dot_arr[0:-1])
+
+                return new_name
         raise Exception('Cannot find valid container name in {names}'
                         .format(names=names))
 
@@ -400,8 +431,8 @@ class DockerPlugin:
                     specs[node.values[0]] = node.values[1]
                 elif node.key == 'Verbose':
                     handle.verbose = str_to_bool(node.values[0])
-		elif node.key == 'Interval':
-		    COLLECTION_INTERVAL = int(node.values[0])
+                elif node.key == 'Interval':
+                    COLLECTION_INTERVAL = int(node.values[0])
             except Exception as e:
                 log.error('Failed to load the configuration %s due to %s'
                           % (node.key, e))
@@ -411,20 +442,25 @@ class DockerPlugin:
 
     def init_callback(self):
         self.client = docker.Client(
-                base_url=self.docker_url,
-                version=DockerPlugin.MIN_DOCKER_API_VERSION)
+            base_url=self.docker_url,
+            version=DockerPlugin.MIN_DOCKER_API_VERSION)
         self.client.timeout = self.timeout
 
-        # Check API version for stats endpoint support.
         try:
             version = self.client.version()['ApiVersion']
-            if StrictVersion(version) < \
-                    StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
-                raise Exception
-        except:
-            log.exception(('Docker daemon at {0} does not '
-                           'support container statistics!')
-                          .format(self.docker_url))
+        except IOError, e:
+            log.exception(('Unable to access Docker daemon at {url} '
+                           'This may indicate SELinux problems. : {error}')
+                          .format(url=self.docker_url,
+                                  error=e))
+            return False
+
+        # Check API version for stats endpoint support.
+        if StrictVersion(version) < \
+                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
+            log.error(('Docker daemon at {url} does not '
+                       'support container statistics!')
+                      .format(url=self.docker_url))
             return False
 
         collectd.register_read(self.read_callback, interval=COLLECTION_INTERVAL)
@@ -445,7 +481,7 @@ class DockerPlugin:
         except Exception as e:
             containers = []
             log.exception(('Failed to retrieve containers info from {url} '
-                           'This may indicate that the docker api is '
+                           'This may indicate that the Docker API is '
                            'inaccessible or that there are no running '
                            'containers. : {error}')
                           .format(url=self.docker_url,
@@ -467,8 +503,8 @@ class DockerPlugin:
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
                     self.stats[container['Id']] = \
-                            ContainerStats(container, self.dimensions,
-                                           self.client)
+                        ContainerStats(container, self.dimensions,
+                                       self.client)
 
                 cstats = self.stats[container['Id']]
                 stats = cstats.stats
@@ -478,10 +514,8 @@ class DockerPlugin:
                     continue
 
                 # Process stats through each reader.
-                for key, method in self.METHODS.items():
-                    value = stats.get(key)
-                    if value:
-                        method(container, cstats.dimensions, value, read_at)
+                for method in self.METHODS:
+                    method(container, cstats.dimensions, stats, read_at)
             except Exception, e:
                 log.exception(('Unable to retrieve stats for container '
                                '{container}: {msg}')
@@ -501,6 +535,7 @@ class CollectdLogHandler(logging.Handler):
         plugin -- name of the plugin (default 'unknown')
         verbose -- enable/disable verbose messages (default False)
     """
+
     def __init__(self, plugin="unknown", verbose=False):
         """Initializes CollectdLogHandler
         Arguments
@@ -513,7 +548,7 @@ class CollectdLogHandler(logging.Handler):
 
     def emit(self, record):
         """
-        Emits a log record to the appropraite collectd log function
+        Emits a log record to the appropriate collectd log function
 
         Arguments
         record -- str log record to be emitted
@@ -532,9 +567,7 @@ class CollectdLogHandler(logging.Handler):
                     collectd.debug('%s : %s' % (self.plugin, record.msg))
         except Exception as e:
             collectd.warning(('{p} [ERROR]: Failed to write log statement due '
-                              'to: {e}').format(p=self.plugin,
-                                                e=e
-                                                ))
+                              'to: {e}').format(p=self.plugin, e=e))
 
 
 class CollectdLogger(logging.Logger):
@@ -548,6 +581,7 @@ class CollectdLogger(logging.Logger):
     name -- name of the logger
     level -- log level to filter by
     """
+
     def __init__(self, name, level=logging.NOTSET):
         """Initializes CollectdLogger
 
@@ -588,13 +622,14 @@ if __name__ == '__main__':
             if getattr(self, 'type_instance', None):
                 identifier += '-' + self.type_instance
             print 'PUTVAL', identifier, \
-                  ':'.join(map(str, [int(self.time)] + self.values))
+                ':'.join(map(str, [int(self.time)] + self.values))
+
 
     class ExecCollectd:
         def Values(self):
             return ExecCollectdValues()
 
-        def register_read(self, callback):
+        def register_read(self, callback, interval):
             pass
 
         def error(self, msg):
@@ -612,6 +647,7 @@ if __name__ == '__main__':
         def debug(self, msg):
             print 'DEBUG: ', msg
 
+
     collectd = ExecCollectd()
     plugin = DockerPlugin()
     if len(sys.argv) > 1:
@@ -628,6 +664,7 @@ if __name__ == '__main__':
 # Normal plugin execution via CollectD
 else:
     import collectd
+
     plugin = DockerPlugin()
     collectd.register_config(plugin.configure_callback)
     collectd.register_init(plugin.init_callback)

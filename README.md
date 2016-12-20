@@ -155,9 +155,21 @@ everything else from the plugin:
     </Match>
     Target "return"
   </Rule>
+  <Rule "CpuPercent">
+    <Match "regex">
+      Type "^cpu.percent$"
+    </Match>
+    Target "return"
+  </Rule>
   <Rule "MemoryUsage">
     <Match "regex">
       Type "^memory.usage$"
+    </Match>
+    Target "return"
+  </Rule>
+  <Rule "MemoryPercent">
+    <Match "regex">
+      Type "^memory.percent$"
     </Match>
     Target "return"
   </Rule>
