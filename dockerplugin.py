@@ -463,7 +463,8 @@ class DockerPlugin:
                       .format(url=self.docker_url))
             return False
 
-        collectd.register_read(self.read_callback, interval=COLLECTION_INTERVAL)
+        collectd.register_read(self.read_callback,
+                               interval=COLLECTION_INTERVAL)
         log.notice(('Collecting stats about Docker containers from {url} '
                     '(API version {version}; timeout: {timeout}s).')
                    .format(url=self.docker_url,
@@ -601,6 +602,12 @@ class CollectdLogger(logging.Logger):
         self.log(25, msg)
 
 
+def shutdown():
+    """Cleanup on plugin shutdown."""
+    log.info("dockerplugin shutting down")
+    log.removeHandler(handle)
+
+
 # Set up logging
 logging.setLoggerClass(CollectdLogger)
 log = logging.getLogger(__name__)
@@ -624,7 +631,6 @@ if __name__ == '__main__':
             print 'PUTVAL', identifier, \
                 ':'.join(map(str, [int(self.time)] + self.values))
 
-
     class ExecCollectd:
         def Values(self):
             return ExecCollectdValues()
@@ -647,7 +653,6 @@ if __name__ == '__main__':
         def debug(self, msg):
             print 'DEBUG: ', msg
 
-
     collectd = ExecCollectd()
     plugin = DockerPlugin()
     if len(sys.argv) > 1:
@@ -668,3 +673,4 @@ else:
     plugin = DockerPlugin()
     collectd.register_config(plugin.configure_callback)
     collectd.register_init(plugin.init_callback)
+    collectd.register_shutdown(shutdown)
