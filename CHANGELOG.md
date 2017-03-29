@@ -2,9 +2,14 @@
 
 This file documents important changes to the Docker plugin for collectd. 
 
-- [2016-08-03: Dimensionalize block I/O and CPU per-core metrics](#2016-08-03-dimensionalize-block-i-o-and-cpu-per-core-metrics)
+- [2017-03-29: Improve Dimension Extraction Robustness](#2017-03-29)
+- [2016-08-03: Dimensionalize block I/O and CPU per-core metrics](#2016-08-03)
 
-#### 2016-08-03: Dimensionalize block I/O and CPU per-core metrics
+#### <a name="2017-03-29">2017-03-29: Dimensionalize block I/O and CPU per-core metrics</a>
+
+Improves the stability of the plugin when containers are observed with environment variables set to empty strings.
+
+#### <a name="2016-08-03">2016-08-03: Dimensionalize block I/O and CPU per-core metrics</a>
 
 Prior to this update, the plugin transmitted block I/O and CPU per-core metrics
 with the names of the block device and CPU core respectively included as part of
