@@ -272,8 +272,13 @@ class DimensionsProvider:
 
             if provider == 'inspect' or provider == 'env':
                 raw = client.inspect_container(container)
-                env = dict((k, v) for k, v in map(lambda e: e.split('=', 1),
-                                                  raw['Config']['Env']))
+                env = {}
+                for element in map(lambda e: e.split('=', 1),
+                                   raw['Config']['Env']):
+                    if len(element) == 2:
+                        env[element[0]] = element[1]
+                    elif len(element) == 1:
+                        env[element[0]] = ""
 
                 if provider == 'inspect':
                     match = jsonpath_rw.parse(source).find(raw)
