@@ -5,7 +5,7 @@ This file documents important changes to the Docker plugin for collectd.
 - [2017-03-29: Improve Dimension Extraction Robustness](#2017-03-29)
 - [2016-08-03: Dimensionalize block I/O and CPU per-core metrics](#2016-08-03)
 
-#### <a name="2017-03-29">2017-03-29: Dimensionalize block I/O and CPU per-core metrics</a>
+#### <a name="2017-03-29">2017-03-29: Improve Dimension Extraction Robustness</a>
 
 Improves the stability of the plugin when containers are observed with environment variables set to empty strings.
 
