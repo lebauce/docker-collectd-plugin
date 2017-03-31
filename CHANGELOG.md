@@ -2,8 +2,13 @@
 
 This file documents important changes to the Docker plugin for collectd. 
 
+- [2017-03-31: Update Documentation For Filtering Blkio Metrics](#2017-03-31)
 - [2017-03-29: Improve Dimension Extraction Robustness](#2017-03-29)
 - [2016-08-03: Dimensionalize block I/O and CPU per-core metrics](#2016-08-03)
+
+#### <a name="2017-03-31">2017-03-31: Update Documentation For Filtering Blkio Metrics</a>
+
+Update documentation for filtering blkio Metrics.
 
 #### <a name="2017-03-29">2017-03-29: Improve Dimension Extraction Robustness</a>
 
