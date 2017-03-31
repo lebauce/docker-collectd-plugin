@@ -182,7 +182,7 @@ everything else from the plugin:
   <Rule "BlockIO">
     <Match "regex">
       Type "^blkio$"
-      TypeInstance "^io_service_bytes_recursive-.*"
+      TypeInstance "^io_service_bytes_recursive*"
     </Match>
     Target "return"
   </Rule>
