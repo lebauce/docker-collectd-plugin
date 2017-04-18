@@ -321,6 +321,32 @@ class DockerPlugin:
                     if not re.match("/.*/", name):
                         container['Name'] = name[1:]
 
+                # If the container is a marathon app then set the name
+                # to be based off the app id. Can't use -1 since we
+                # want don't want to grab the app version number if it exists.
+                cdata = self.client.inspect_container(container['Id'])
+                try:
+                    cenv = cdata['Config']['Env']
+                    appid = [x.split('/')[1] for x in cenv
+                            if x.startswith('MARATHON_APP_ID=')][0]
+
+                    if appid is not None:
+                        container['Name'] = appid
+                except:
+                    pass
+
+                # If the container is a chronos app then set the name
+                # to be based off the app id.
+                try:
+                    cenv = cdata['Config']['Env']
+                    appid = [x.split('=')[-1] for x in cenv
+                            if x.startswith('CHRONOS_JOB_NAME=')][0]
+
+                    if appid is not None:
+                        container['Name'] = 'chronos.' + appid
+                except:
+                    pass
+
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
                     self.stats[container['Id']] = ContainerStats(container,
