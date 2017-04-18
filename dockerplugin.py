@@ -327,7 +327,7 @@ class DockerPlugin:
                 cdata = self.client.inspect_container(container['Id'])
                 try:
                     cenv = cdata['Config']['Env']
-                    appid = [x.split('/')[2] for x in cenv
+                    appid = [x.split('/')[1] for x in cenv
                             if x.startswith('MARATHON_APP_ID=')][0]
 
                     if appid is not None:
