@@ -273,8 +273,8 @@ class DimensionsProvider:
             if provider == 'inspect' or provider == 'env':
                 raw = client.inspect_container(container)
                 env = {}
-                for element in map(lambda e: e.split('=', 1),
-                                   raw['Config']['Env']):
+                raw_env = raw['Config']['Env'] or []
+                for element in map(lambda e: e.split('=', 1), raw_env):
                     if len(element) == 2:
                         env[element[0]] = element[1]
                     elif len(element) == 1:
