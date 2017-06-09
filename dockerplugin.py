@@ -28,6 +28,7 @@ import docker
 import jsonpath_rw
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -399,7 +400,70 @@ class DockerPlugin:
         self.timeout = DockerPlugin.DEFAULT_DOCKER_TIMEOUT
         self.capture = False
         self.dimensions = None
+        self.excluded_labels = []
+        self.excluded_images = []
+        self.excluded_names = []
         self.stats = {}
+
+    def is_excluded_label(self, container):
+        """
+        Determines whether container has labels and values matching the
+        excluded label patterns
+        """
+        labels = container.get("Labels", {})
+        for exlabel in self.excluded_labels:
+            for label, value in labels.items():
+                if exlabel[0].match(label) and exlabel[1].match(value):
+                    log.info(("Excluding container '{c}' because the label "
+                              "'{l}' matched pattern '{lreg}' and value '{v}' "
+                              "matched pattern '{vreg}'"
+                              ).format(c=container.get('Names', ''),
+                                       l=label,
+                                       lreg=exlabel[0].pattern,
+                                       v=value,
+                                       vreg=exlabel[1].pattern))
+                    return True
+        return False
+
+    def is_excluded_image(self, container):
+        """
+        Determines whether container has image name matching the excluded
+        image patterns
+        """
+        image = container.get("Image", "")
+        for eximage in self.excluded_images:
+            if eximage.match(image):
+                log.info(("Excluding container '{c}' because the image name "
+                          "'{img}' matched pattern '{eximg}'"
+                          ).format(img=image, eximg=eximage.pattern,
+                                   c=container.get('Names', '')))
+                return True
+        return False
+
+    def is_excluded_name(self, container):
+        """
+        Determines whether container has a name matching the excluded
+        name patterns
+        """
+        names = container.get("Names", [])
+        for exname in self.excluded_names:
+            for name in names:
+                if exname.match(name):
+                    log.info(("Excluding container '{c}' because the "
+                              "container name '{n}' matched pattern '{exn}'"
+                              ).format(n=name, exn=exname.pattern,
+                                       c=container.get('Names', '')))
+                    return True
+        return False
+
+    def is_excluded(self, container):
+        """
+        Determines whether the container should be excluded from metric
+        collection based on image name, names, or labels
+        """
+        return self.is_excluded_image(container) \
+            or self.is_excluded_name(container) \
+            or self.is_excluded_label(container)
 
     def _container_name(self, names):
         """Extract the true container name from the list of container names
@@ -438,6 +502,32 @@ class DockerPlugin:
                     handle.verbose = str_to_bool(node.values[0])
                 elif node.key == 'Interval':
                     COLLECTION_INTERVAL = int(node.values[0])
+                elif (node.key == 'ExcludeName' or
+                      node.key == 'ExcludeImage' or
+                      node.key == 'ExcludeLabel'):
+                    if len(node.values) >= 1:
+                        pattern = node.values[0]
+                        try:
+                            reg = re.compile(pattern)
+                            if node.key == 'ExcludeName':
+                                self.excluded_names.append(reg)
+                            elif node.key == 'ExcludeImage':
+                                self.excluded_images.append(reg)
+                            else:  # node.key == 'ExcludeLabel'
+                                if len(node.values) == 2:
+                                    pattern = node.values[1]
+                                else:
+                                    pattern = ".*"
+                                val = re.compile(pattern)
+                                self.excluded_labels.append([reg, val])
+                        except Exception as e:
+                            log.error('Failed to compile regex pattern "{p}". '
+                                      'The following exclusion "{e}" with '
+                                      'values "{v}" will be ignored.  Please '
+                                      'fix the pattern'.format(p=pattern,
+                                                               e=node.key,
+                                                               v=node.values))
+
             except Exception as e:
                 log.error('Failed to load the configuration %s due to %s'
                           % (node.key, e))
@@ -481,6 +571,7 @@ class DockerPlugin:
         try:
             containers = [c for c in self.client.containers()
                           if c['Status'].startswith('Up')]
+
             # Log the list of containers retrieved
             log.info('The following containers were fetched from {url}: '
                      '{c}'.format(url=self.docker_url, c=containers))
@@ -508,6 +599,8 @@ class DockerPlugin:
 
                 # Start a stats gathering thread if the container is new.
                 if container['Id'] not in self.stats:
+                    if self.is_excluded(container):
+                        continue
                     self.stats[container['Id']] = \
                         ContainerStats(container, self.dimensions,
                                        self.client)
@@ -623,6 +716,21 @@ log.addHandler(handle)
 
 # Command-line execution
 if __name__ == '__main__':
+    class CollectdConfigurations():
+        def __init__(self):
+            self.children = []
+
+        def __repr__(self):
+            return str(self.__dict__)
+
+    class Configuration():
+        def __init__(self, key, values):
+            self.key = key
+            self.values = values
+
+        def __repr__(self):
+            return str(self.__dict__)
+
     class ExecCollectdValues:
         def dispatch(self):
             if not getattr(self, 'host', None):
@@ -659,16 +767,73 @@ if __name__ == '__main__':
             print 'DEBUG: ', msg
 
     collectd = ExecCollectd()
+
+    # importing here because collectd must be instantiated first in order to
+    # log the import error
+    try:
+        import argparse
+    except ImportError as e:
+        raise Exception("Unable to import the library 'argparse'. "
+                        "Please install the dependency argparse using pip.")
+
     plugin = DockerPlugin()
-    if len(sys.argv) > 1:
-        plugin.docker_url = sys.argv[1]
+
+    # set up argument parser
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--BaseURL', type=str,
+                        help="specifies url used to interact with docker api")
+    parser.add_argument('--Timeout', type=int,
+                        help="specifies the timeout in seconds for requests")
+    parser.add_argument('--Dimension', type=str, nargs='+', action='append',
+                        help='specifies the <name> and <spec>')
+    parser.add_argument('--Verbose', type=str,
+                        help="turns verbose logging on or off (true/false)")
+    parser.add_argument('--Interval', type=int,
+                        help="sets interval for reporting metrics")
+    parser.add_argument('--ExcludeLabel', type=str, nargs='+', action='append',
+                        help="specifies a <label> and <value> regex patterns")
+    parser.add_argument('--ExcludeName', type=str, nargs=1, action='append',
+                        help="specifies a <name> regex pattern to filter by")
+    parser.add_argument('--ExcludeImage', type=str, nargs=1, action='append',
+                        help="specifies an <image name> pattern to filter by")
+    args = parser.parse_args()
+
+    # transform arguments into configurations
+    configs = CollectdConfigurations()
+    interval = COLLECTION_INTERVAL
+    if args.BaseURL:
+        configs.children.append(Configuration('BaseURL', [args.BaseURL]))
+    if args.Timeout:
+        configs.children.append(Configuration('Timeout',
+                                              [str(args.Timeout)]))
+    if args.Dimension:
+        for elem in args.Dimension:
+            configs.children.append(Configuration('Dimension', elem))
+    if args.Verbose:
+        configs.children.append(Configuration('Verbose', [args.Verbose]))
+    if args.Interval:
+        interval = args.Interval
+        configs.children.append(Configuration('Interval',
+                                              [str(interval)]))
+    if args.ExcludeLabel:
+        for elem in args.ExcludeLabel:
+            configs.children.append(Configuration('ExcludeLabel', elem))
+    if args.ExcludeName:
+        for elem in args.ExcludeName:
+            configs.children.append(Configuration('ExcludeName', elem))
+    if args.ExcludeImage:
+        for elem in args.ExcludeImage:
+            configs.children.append(Configuration('ExcludeImage', elem))
+
+    # pass configurations through collectd configuration code path
+    plugin.configure_callback(configs)
 
     if not plugin.init_callback():
         sys.exit(1)
 
     while True:
         plugin.read_callback()
-        time.sleep(5)
+        time.sleep(interval)
 
 
 # Normal plugin execution via CollectD

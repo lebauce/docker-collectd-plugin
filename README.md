@@ -193,6 +193,44 @@ everything else from the plugin:
 
 For convenience, you'll find those configuration blocks in the example configuration file [`10-docker.conf`](https://github.com/signalfx/integrations/blob/master/collectd-docker/10-docker.conf).
 
+## How to filter by Names, Labels, and Image Names
+It is now possible to filter by container names, image names, and labels.
+Each filter supports python regular expression strings.
+
+### Names
+Containers with names matching the specified regular expression patterns
+Because the Docker api reports container names with preceding '/' an appropriate regular expression pattern
+should be `"/name"` or a substring match `".name"`
+
+```apache
+<Module dockerplugin>
+  ...
+  ExcludeName "/random_name" # This pattern matches for /random_name
+  ExcludeName ".*random.*" # This pattern matches for the substring random_name
+</Module>
+```
+
+### Labels
+Labels are key/value pairs.  You may specify just a label key pattern to exclude all containers with a label whose key mattches the pattern regardless of it's value.  You may also specify a label key pattern and a pattern for the value.  When both key and value patterns are provided, they must both match for the container to be excluded.
+
+```apache
+<Module dockerplugin>
+  ...
+  ExcludeLabel ".hello." ".world." # This pattern exludes labels with the substrings "hello" and values with substring "world"
+  ExcludeLabel ".hello." ".*" # This pattern excludes labels with the substring "hello" and all values 
+</Module>
+```
+
+### Image Names
+```apache
+<Module dockerplugin>
+  ...
+  ExcludeImage ".*elasticsearch.*" # This pattern matches for the substring elasticsearch
+  ExcludeImage "^(?=elasticsearch)(?=.*:latest)" # This pattern looks for the word elasticsearch at the beginning of the name and tag latest
+  ExcludeImage "^(?=.*search)(?=.*:latest)" # This pattern looks for the substring search in the name and tag latest 
+</Module>
+```
+
 ## Requirements
 
 * Docker 1.5+
