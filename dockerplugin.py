@@ -620,6 +620,10 @@ class DockerPlugin:
                                '{container}: {msg}')
                               .format(container=_c(container), msg=e))
 
+    def stop_all(self):
+        for stat_thread in self.stats.values():
+            stat_thread.stop = True
+
 
 class CollectdLogHandler(logging.Handler):
     """Log handler to forward statements to collectd
@@ -704,6 +708,8 @@ def shutdown():
     """Cleanup on plugin shutdown."""
     log.info("dockerplugin shutting down")
     log.removeHandler(handle)
+
+    plugin.stop_all()
 
 
 # Set up logging
