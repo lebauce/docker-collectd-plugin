@@ -535,6 +535,7 @@ class DockerPlugin:
 
         self.dimensions = DimensionsProvider(specs)
 
+
     def init_callback(self):
         self.client = docker.Client(
             base_url=self.docker_url,
@@ -544,18 +545,19 @@ class DockerPlugin:
         try:
             version = self.client.version()['ApiVersion']
         except IOError, e:
-            log.exception(('Unable to access Docker daemon at {url} '
-                           'This may indicate SELinux problems. : {error}')
-                          .format(url=self.docker_url,
-                                  error=e))
-            return False
+            # Log a warning if connection is not established
+            collectd.warning(('Unable to access Docker daemon at {url} in \
+                               init_callback. Will try in read_callback.'
+                              'This may indicate SELinux problems. : {error}')
+                              .format(url=self.docker_url, error=e))
+
+            collectd.register_read(self.read_callback,
+                                 interval=COLLECTION_INTERVAL)
+
+            return True
 
         # Check API version for stats endpoint support.
-        if StrictVersion(version) < \
-                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
-            log.error(('Docker daemon at {url} does not '
-                       'support container statistics!')
-                      .format(url=self.docker_url))
+        if not self.check_version(version):
             return False
 
         collectd.register_read(self.read_callback,
@@ -567,7 +569,33 @@ class DockerPlugin:
                            timeout=self.timeout))
         return True
 
+
+    # Method to compare docker version with min version required
+    def check_version(self, version):
+        if StrictVersion(version) < \
+                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
+            log.error(('Docker daemon at {url} does not '
+                       'support container statistics!')
+                      .format(url=self.docker_url))
+            return False
+        return True
+
+
     def read_callback(self):
+        try:
+            version = self.client.version()['ApiVersion']
+        except IOError, e:
+            # Log a warning if connection is not established
+            log.exception(('Unable to access Docker daemon at {url}. '
+                           'This may indicate SELinux problems. : {error}')
+                          .format(url=self.docker_url,
+                                  error=e))
+            return
+
+        # Check API version for stats endpoint support.
+        if not self.check_version(version):
+          return
+
         try:
             containers = [c for c in self.client.containers()
                           if c['Status'].startswith('Up')]
