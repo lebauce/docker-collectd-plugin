@@ -2,9 +2,11 @@ blkio                   read:COUNTER:0:U, write:COUNTER:0:U, sync:COUNTER:0:U, a
 blkio.single            value:COUNTER:0:U
 cpu.percpu.usage        value:COUNTER:0:U
 cpu.usage               total:COUNTER:0:U, kernelmode:COUNTER:0:U, usermode:COUNTER:0:U, system:COUNTER:0:U
+cpu.percent             value:GAUGE:0:150
 cpu.throttling_data     periods:COUNTER:0:U, throttled_periods:COUNTER:0:U, throttled_time:COUNTER:0:U
 network.usage           rx_bytes:COUNTER:0:U, rx_dropped:COUNTER:0:U, rx_errors:COUNTER:0:U, rx_packets:COUNTER:0:U, tx_bytes:COUNTER:0:U, tx_dropped:COUNTER:0:U, tx_errors:COUNTER:0:U, tx_packets:COUNTER:0:U
 memory.usage            limit:GAUGE:0:U, max:GAUGE:0:U, total:GAUGE:0:U
 memory.stats            value:GAUGE:0:U
 memory.percent          value:GAUGE:0:150
-cpu.percent             value:GAUGE:0:150
+cpu.quota               value:GAUGE:0:U
+cpu.shares              value:GAUGE:0:U
