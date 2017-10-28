@@ -1,2 +1,3 @@
 py-dateutil
-docker-py>=1.0.0
+docker
+jsonpath_rw
