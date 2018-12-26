@@ -158,8 +158,9 @@ class MemoryStats(Stats):
         for key, value in (mem_stats.get('stats') or {}).items():
             cls.emit(container, 'memory.stats', [value],
                      type_instance=key, t=t)
-
-        mem_percent = 100.0 * mem_stats['usage'] / mem_stats['limit']
+        
+        mem_usage_no_cache = mem_stats['usage'] - mem_stats['stats']['cache']
+        mem_percent = 100.0 * mem_usage_no_cache / mem_stats['limit']
         cls.emit(container, 'memory.percent', ["%.2f" % mem_percent], t=t)
 
 
