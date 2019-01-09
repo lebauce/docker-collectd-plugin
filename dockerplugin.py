@@ -103,7 +103,7 @@ class BlkioStats(Stats):
                     cls.emit(container, 'blkio.single', values,
                              type_instance=key, t=t)
                 else:
-                    collectd.warn(('Unexpected number of blkio stats for '
+                    collectd.warning(('Unexpected number of blkio stats for '
                                    'container {container}!')
                                   .format(container=_c(container)))
 
