@@ -46,12 +46,22 @@ def _c(c):
     return '{id}/{name}'.format(id=c['Id'][:7], name=c['Name'])
 
 
+def _d(d):
+    """Formats a dictionary of key/value pairs as a comma-delimited list of
+    key=value tokens."""
+    return ','.join(['='.join(p) for p in d.items()])
+
+
 class Stats:
     @classmethod
     def emit(cls, container, type, value, t=None, type_instance=None):
         val = collectd.Values()
         val.plugin = 'docker'
         val.plugin_instance = container['Name']
+
+        if container['Labels']:
+            val.plugin_instance += '[{labels}]'.format(
+                         labels=_d(container['Labels']))
 
         if type:
             val.type = type
