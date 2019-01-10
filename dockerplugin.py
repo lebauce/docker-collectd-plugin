@@ -25,6 +25,7 @@
 
 import dateutil.parser
 from distutils.version import StrictVersion
+import calendar
 import docker
 import os
 import threading
@@ -58,7 +59,7 @@ class Stats:
             val.type_instance = type_instance
 
         if t:
-            val.time = time.mktime(dateutil.parser.parse(t).timetuple())
+            val.time = calendar.timegm(dateutil.parser.parse(t).utctimetuple())
         else:
             val.time = time.time()
 
