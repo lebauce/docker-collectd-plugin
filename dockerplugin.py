@@ -288,10 +288,14 @@ class DockerPlugin:
         # Check API version for stats endpoint support.
         try:
             version = self.client.version()['ApiVersion']
-            if StrictVersion(version) < \
-                    StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
-                raise Exception
-        except:
+        except Exception, e:
+            collectd.warning(('Cannot determine Docker API version '
+                              'at {url}: {msg}')
+                             .format(url=self.docker_url, msg=e))
+            return False
+
+        if StrictVersion(version) < \
+                StrictVersion(DockerPlugin.MIN_DOCKER_API_VERSION):
             collectd.warning(('Docker daemon at {url} does not '
                               'support container statistics!')
                              .format(url=self.docker_url))
